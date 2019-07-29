@@ -292,9 +292,9 @@ class GalacticCenterImage(ScienceImage):
             plt.imshow(np.nanmedian(staro, axis=0), origin="lower", norm=LogNorm())
             plt.show()
         self.psf                = np.nanmedian(staro, axis=0)
-        x,y                     = np.meshgrid(x, y)
-        f                       = interp2d(x, y, self.psf, kind="cubic")
-        self.psf                = f(np.arange(0,15), np.arange(0, 15))
+        #x,y                     = np.meshgrid(x, y)
+        #f                       = interp2d(x, y, self.psf, kind="cubic")
+        #self.psf                = f(np.arange(0,15), np.arange(0, 15))
         
     def get_stars(self, test=None):
         if test is None: test   = self.test
@@ -311,13 +311,14 @@ class GalacticCenterImage(ScienceImage):
             
             
     def save_fits(self, store_dir, overwrite=False):
+        import pandas as pd
         name                    = store_dir + self.name[:-5] + "_aquisition_camera_cube.fits"
-        raw_name                = store_dir + self.name[:-5] + "_aquisition_camera_raw_cube.fits"
-        cube                    = self.frames.copy()
-        cube[:, 0, 0]           = self.frame_times
         
-        raw                     = self.image
-        
+        cube                    = fits.PrimaryHDU(self.frames)
+        raw                     = fits.ImageHDU(self.image)
+        psf                     = fits.ImageHDU(self.psf)
+        raise Exception("Need to store time in some kind of string format oder something...")
+        time                    = [pd.to_datetime(ti).]
         fits.writeto(name, cube, overwrite=overwrite)
         fits.writeto(raw_name, raw, overwrite=overwrite)
         

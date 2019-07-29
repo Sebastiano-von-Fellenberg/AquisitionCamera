@@ -4,6 +4,8 @@ from astropy.io import fits
 from glob import glob
 from datetime import datetime
 import gc
+import pandas as pd
+
 
 from scipy.signal import correlate2d, convolve2d
 from scipy.ndimage import shift
@@ -13,13 +15,16 @@ from matplotlib.colors import LogNorm
 def opener(path):
 
     files                       = []
+    file_names                  = []
     for fi in glob(path + "*fits"):
         f0                      = fits.open(fi) 
-        if len(f0)  ==  18: files.append(f0)
+        file_names.append(fi)
+        files.append(f0)
     headers                     = []
     aquistion_images            = []
     names                       = []
-    for fi in files:
+    for fi, finame in zip(files, file_names):
+        print(finame)
         h0                      = fi[0].header 
         i0                      = fi[4].data
         n0                      = fi[0].header["ARCFILE"]
@@ -31,6 +36,39 @@ def opener(path):
     
     return aquistion_images, headers
 
+
+class ObservationNight(list):
+    def __init__(self, path, gc=True, savedir=None):
+        self.path               = path
+        self.gc                 = gc
+        self.image_objects      = None
+        
+        if savedir is None:
+            self.savedir        = path
+        else:
+            self.savedir        = savedir
+        
+        self.aquistion_images, self.headers = opener(self.path)
+    
+    def get_reduction(self):
+        self.image_objects      = []
+        if self.gc:
+            for i, h in zip(self.aquistion_images, self.headers):
+                o               = GalacticCenterImage(i, h)
+                o.get_PSF()
+                self.image_objects.append(o)
+        else:
+            for i, h in zip(self.aquistion_images, self.headers):
+                self.image_objects.append(ScienceImage(i, h))
+    
+    def save(self):
+        for io in self.image_objects:
+            print(io)
+            io.save_fits(self.savedir)
+
+
+        
+        
     
 class Image():
     def __init__(self, image, test=False, verbose=False):
@@ -197,6 +235,7 @@ class AquisitionImage(Image):
         time                    = np.cumsum(np.repeat(self.dit, self.ndit))
         time                    = np.array([np.timedelta64(int(ti*1000), "ms") for ti in time])
         self.timestamps         = np.array([self.date + ti for ti in time])
+        self.timestamps_str     = np.array([str(pd.to_datetime(ti)) for ti in self.timestamps])
 
 class ScienceImage(AquisitionImage):
     def __init__(self, image, header, test=False, verbose=False, stack=20, correct_dead_pixels=True):
@@ -252,6 +291,24 @@ class ScienceImage(AquisitionImage):
 
         plt.show()
             
+    def save_fits(self, store_dir, overwrite=False):
+        name                    = store_dir + self.name[:-5] + "_aquisition_camera_cube.fits"
+        
+        cube                    = fits.PrimaryHDU(self.frames, header=self.header)
+        raw                     = fits.ImageHDU(self.image)
+        image                   = fits.ImageHDU(np.nanmedian(self.image, axis=0))
+        
+        try:
+            psf                 = fits.ImageHDU(self.psf)
+            hdul                = fits.HDUList([cube, raw, image, psf])
+        except AttributeError:
+            print("no psf found")
+            hdul                = fits.HDUList([cube, raw, image])
+            
+        
+        hdul                    = fits.HDUList([cube, raw, image, psf])
+        hdul.writeto(name, overwrite=overwrite)
+        
 class GalacticCenterImage(ScienceImage):
     def __init__(self, image, header, test=False, verbose=False, correct_dead_pixels=True):
         super().__init__(image, header, test=test, verbose=verbose, correct_dead_pixels=correct_dead_pixels)
@@ -305,22 +362,12 @@ class GalacticCenterImage(ScienceImage):
         
         
         if test:
-            plt.imshow(data, origin="lower", norm=LogNorm())
-            plt.plot(self.sources["xcentroid"], self.sources["ycentroid"], "o")
+            plt.imshow(data, origin="lower", norm=LogNorm(vmax=100))
+            plt.plot(self.sources["xcentroid"], self.sources["ycentroid"], "o", color="white", alpha=0.5)
             plt.show()
             
             
-    def save_fits(self, store_dir, overwrite=False):
-        import pandas as pd
-        name                    = store_dir + self.name[:-5] + "_aquisition_camera_cube.fits"
-        
-        cube                    = fits.PrimaryHDU(self.frames)
-        raw                     = fits.ImageHDU(self.image)
-        psf                     = fits.ImageHDU(self.psf)
-        raise Exception("Need to store time in some kind of string format oder something...")
-        time                    = [pd.to_datetime(ti).]
-        fits.writeto(name, cube, overwrite=overwrite)
-        fits.writeto(raw_name, raw, overwrite=overwrite)
+
         
     def get_deconvolution(self):
         from scipy.signal import  convolve2d

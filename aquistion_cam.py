@@ -70,9 +70,32 @@ class ObservationNight(list):
         nightcube               = []
         for io in self.image_objects:
             nightcube.append(np.nanmedian(io.image, axis=0))
+        self.nightcube          = np.array(nightcube)
+        self.shifted_cube       = self.shiftcube()
+        
         fits.writeto(self.savedir + "aquistion_nightcube.fits", np.array(nightcube))
+        fits.writeto(self.savedir + "aquistion_shifted_nightcube.fits", np.array(self.shifted_cube))
         
+    def aligncube(self, x0, y0, search_box=5):
+        positions = []
+        shifted_cube =[]
+        for image in self.nightcube:
+            positions.append(centroid_2dg(image[x0-search_box:x0+search_box, y0-search_box:y0+search_box]))
+        positions = np.array(positions)
+        return positions[0] - positions
         
+    def computeshift(self, shift_list):
+        #positions[0][1] - p[1], positions[0][0] - p[0] ## this once worked!!
+        return np.median(shift_list, axis=0), np.std(shift_list, axis=0)
+
+    def shiftcube(self,x0=28, y0=13, search_box=10):
+        shift_list              = self.aligncube(x0, y0, search_box=search_box)
+        shifted_cube = []
+        for image, s in zip(self.nightcube, shift_list):
+            shifted_cube.append(shift(image, (s[1], s[0])))
+            
+        return np.array(shifted_cube)
+    
     
 class Image():
     def __init__(self, image, test=False, verbose=False):
@@ -387,5 +410,6 @@ class GalacticCenterImage(ScienceImage):
         plt.imshow(data, origin="lower", norm=LogNorm())
         plt.show()
     
+
             
 #opener("/home/sebastiano/Documents/Data/GRAVITY/data/")

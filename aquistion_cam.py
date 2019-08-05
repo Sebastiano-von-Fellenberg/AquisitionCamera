@@ -31,7 +31,7 @@ def opener(path):
         i0                      = fi[4].data
         n0                      = fi[0].header["ARCFILE"]
         
-        if "S2" in h0["ESO INS SOBJ NAME"] and "SKY" not in h0["ESO DPR TYPE"] and len(finame) == 34:
+        if len(finame) == 34  and "S2" in h0["ESO INS SOBJ NAME"] and "SKY" not in h0["ESO DPR TYPE"]:
             headers.append(h0)
             aquistion_images.append(i0)
             names.append(n0)

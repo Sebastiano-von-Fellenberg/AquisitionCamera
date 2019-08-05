@@ -16,10 +16,12 @@ def opener(path):
 
     files                       = []
     file_names                  = []
-    for fi in glob(path + "*fits"):
-        f0                      = fits.open(fi) 
-        file_names.append(fi)
-        files.append(f0)
+    for fi in glob(path + "GRAVI.*fits"):
+        print(fi)
+        if "aqu" not in fi:
+            f0                      = fits.open(fi) 
+            file_names.append(fi)
+            files.append(f0)
     headers                     = []
     aquistion_images            = []
     names                       = []
@@ -63,10 +65,12 @@ class ObservationNight(list):
     
     def save(self):
         for io in self.image_objects:
-            print(io)
             io.save_fits(self.savedir)
 
-
+        nightcube               = []
+        for io in self.image_objects:
+            nightcube.append(np.nanmedian(io.image, axis=0))
+        fits.writeto(self.savedir + "aquistion_nightcube.fits", np.array(nightcube))
         
         
     
@@ -177,7 +181,7 @@ class AquisitionImage(Image):
         #plt.show()
        
     def load_bad_pixelmask(self):
-        data                    = fits.getdata("/home/sebastiano/Documents/Data/GRAVITY/data/171229_ACQ_DeadPix/gvacq_DeadPixelMap.fits")
+        data                    = fits.getdata("gvacq_DeadPixelMap.fits")
         mask                    = np.zeros_like(self.image[0])
 
         mask[0:249, 0:249]      = data[self.ref_aqu[0,1]:self.ref_aqu[0,1]+249,self.ref_aqu[0,0]:self.ref_aqu[0,0]+249]
@@ -260,7 +264,7 @@ class ScienceImage(AquisitionImage):
             plt.show()
             
         self.raw_image          = self.image.copy()
-        self.image              = np.nanmedian(image, axis=(0))
+        self.image              = np.nanmedian(image, axis=(0)) ###BUG this definition is different form GalacticCenterImage, where self.image is just self.raw_image 
         self.sub_images         = np.array(image)
     
     

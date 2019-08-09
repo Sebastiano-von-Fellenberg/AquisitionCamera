@@ -9,6 +9,7 @@ import pandas as pd
 
 from scipy.signal import correlate2d, convolve2d
 from scipy.ndimage import shift
+from photutils.centroids import centroid_2dg
 
 from matplotlib.colors import LogNorm
 
@@ -20,7 +21,6 @@ def opener(path):
     files                       = []
     file_names                  = []
     for fi in glob(path + "GRAVI.*fits"):
-        print(fi)
         if "aqu" not in fi:
             f0                      = fits.open(fi) 
             file_names.append(fi)
@@ -29,12 +29,11 @@ def opener(path):
     aquistion_images            = []
     names                       = []
     for fi, finame in zip(files, file_names):
-        print(finame)
         h0                      = fi[0].header 
         i0                      = fi[4].data
         n0                      = fi[0].header["ARCFILE"]
         
-        if len(finame) == 34  and "S2" in h0["ESO INS SOBJ NAME"] and "SKY" not in h0["ESO DPR TYPE"]:
+        if "S2" in h0["ESO INS SOBJ NAME"] and "SKY" not in h0["ESO DPR TYPE"]:
             headers.append(h0)
             aquistion_images.append(i0)
             names.append(n0)
@@ -104,9 +103,9 @@ class ObservationNight(list):
             for i, h in zip(self.aquistion_images, self.headers):
                 self.image_objects.append(ScienceImage(i, h))
     
-    def save(self):
+    def save(self, overwrite=False):
         for io in self.image_objects:
-            io.save_fits(self.savedir)
+            io.save_fits(self.savedir, overwrite=overwrite)
 
         nightcube               = []
         for io in self.image_objects:
@@ -114,8 +113,8 @@ class ObservationNight(list):
         self.nightcube          = np.array(nightcube)
         self.shifted_cube       = self.shiftcube()
         
-        fits.writeto(self.savedir + "aquistion_nightcube.fits", np.array(nightcube))
-        fits.writeto(self.savedir + "aquistion_shifted_nightcube.fits", np.array(self.shifted_cube))
+        fits.writeto(self.savedir + "aquistion_nightcube.fits", np.array(nightcube), overwrite=overwrite)
+        fits.writeto(self.savedir + "aquistion_shifted_nightcube.fits", np.array(self.shifted_cube), overwrite=overwrite)
         
     def aligncube(self, x0, y0, search_box=5):
         positions = []
@@ -338,7 +337,8 @@ class AquisitionImage(Image):
         
         
         if self.test:
-            fig, axes               = plt.subplots(1,2)
+            print("The dead pixels are interpolated assuming the deadpixel mask stored in the module")
+            fig, axes               = plt.subplots(1,2, figsize=(16,10))
             axes[0].imshow(np.nanmedian(self.image, axis=0), origin="lower", norm=LogNorm())
             axes[1].imshow(np.nanmedian(fixed_image, axis=0), origin="lower", norm=LogNorm())
             plt.show()

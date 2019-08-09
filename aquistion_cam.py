@@ -13,6 +13,10 @@ from scipy.ndimage import shift
 from matplotlib.colors import LogNorm
 
 def opener(path):
+    """
+    helper files that opens all files with GRAVI.*fits that are not skys or S2 is not in the science object
+    """
+    
     files                       = []
     file_names                  = []
     for fi in glob(path + "GRAVI.*fits"):

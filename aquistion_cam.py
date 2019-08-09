@@ -13,7 +13,6 @@ from scipy.ndimage import shift
 from matplotlib.colors import LogNorm
 
 def opener(path):
-
     files                       = []
     file_names                  = []
     for fi in glob(path + "GRAVI.*fits"):
@@ -41,6 +40,44 @@ def opener(path):
 
 class ObservationNight(list):
     def __init__(self, path, gc=True, savedir=None):
+        """
+        Reduces all images in the path
+        args:
+        path  str, path to the dir where the GRAVITY fits are located
+        
+        kwargs:
+        gc bool, if True assuming GalacticCenterImages
+        savedir, None or str. if savedir is None savedir is set to path, else to the value of savedir
+        
+        functions:
+        self.get_reduction()
+        reduces the images by creating either ScienceImage image_objects or if gc==True GalacticCenterImage
+        
+        sets attributes
+            self.image_objects, list list of image objects reduced 
+            
+        self.save():
+            calls the save_fits function of ScienceImage to the path stored in self.savedir
+            
+        self.aligncube(x0, y0)
+        args
+        x0, y0 pixel position of the alignment star
+        
+        aligns the upe according to the position x0, y0
+        returns the necessary shifts to align the cube
+        
+        self.computeshift(shift_list)
+        computes median and std of shift_list to average out the position shifts (currently not implemented)
+        
+        returns the median and std
+        
+        
+        self.shiftcube(x0=28, y0=13, search_box=10):
+        shifts the cubes accroding to x0, y0. Default 28, 13 which should be s35 if the observations are normal
+        search_box is the search range in which S35 is searched (or the star at x0, y0)
+        
+        returns the shifted cube
+        """
         self.path               = path
         self.gc                 = gc
         self.image_objects      = None
@@ -99,12 +136,79 @@ class ObservationNight(list):
     
 class Image():
     def __init__(self, image, test=False, verbose=False):
+        """
+        Base class for astronomy images
+        
+        args:
+        image: a np.ndarray array. Test for up to 3D
+        
+        kwargs:
+        test: bool if True implented autotests are preformed
+        verbose: bool if True code becomes talkative
+        """
         self.image              = image
+        if type(test) != bool or type(verbose) != bool: raise ValueError("Type of test and verbose needs to be boolean but is : ", type(test), type(verbose))
+                                                                         
         self.test, self.verbose = test, verbose
         
 class AquisitionImage(Image):
     def __init__(self, image, header, test=False, verbose=False, correct_dead_pixels=True):   
+        """
+        Base class for Aquistion Camera Images
+        args:
+        image: a np.ndarray array. Test for up to 3D
+        header: a fits header image_object
+
+        kwargs:
+        correct_dead_pixels: bool, if True dead pixels stored in the deadpixel mask are interpolated
+        test: bool if True implented autotests are preformed
+        verbose: bool if True code becomes talkative
         
+        functions:
+        self.get_image():
+        function that cuts out the AC image
+        sets attributes:
+            self.image
+        
+        self.get_fiber():
+        reads fiber information from header
+        sets attributes:
+            self.ft_fiber fringetracker fiber
+            self.sc_fiber science fiber
+            self.ref_aqu  infromation on where the AC image starts on the aquistion detector
+        
+        self.get_sc_pos():
+        gets the postion of the science fiber in all four telescopes
+        sets attributes:
+            self.pos_sc     integer postion of the science fiber
+            self.pos_sc_float float postion of the science fiber
+            
+        self.get_ft_pos():
+        gets the postion of the ft fiber in all four telescopes
+        sets attributes:
+            self.pos_sc     integer postion of the ft fiber
+            self.pos_sc_float float postion of the ft fiber
+            
+        self.get_time():
+        gets the time of each exposure based on dit and ndit
+        sets attributes:
+            self.timestamps datetime timestamps based on cumsum(ndit_j*dit_j)
+            self.timestamps_str same as strings
+        
+        self.load_bad_pixelmask():
+        gets the bad pixel mask stored in the module
+        
+        sets attributes:
+            self.mask the mask (np.ndarray)
+        
+        self.get_interpolation():
+        interpolates the dead pixels
+        sets:
+            self.image_uncorrected the raw image
+            
+        updates:
+            self.image now with the dead pixel correction
+        """
         super().__init__(image, test=test, verbose=verbose)
         self.raw_image          = self.image.copy()
         self.header             = header
@@ -118,7 +222,7 @@ class AquisitionImage(Image):
         
     
         
-        self.get_image()
+        self.get_image() 
         self.get_fiber()
         self.get_sc_pos()
         self.get_ft_pos()
@@ -187,7 +291,7 @@ class AquisitionImage(Image):
             return np.sqrt((s2 - s**2 / ns) / ns)
         
         
-
+        raise Exception("buggy implented")
         m0                      = rms(self.image)
         if self. test:
             fig, axes           = plt.subplots(1,2)
@@ -236,6 +340,7 @@ class AquisitionImage(Image):
             plt.show()
         del(image, mask, kernel, fixed_image)
         gc.collect()
+    
     def get_aquisition_camera_plot(self, average=True, show=True):
         fig, ax                 = plt.subplots()
         if average:
@@ -266,6 +371,49 @@ class AquisitionImage(Image):
 
 class ScienceImage(AquisitionImage):
     def __init__(self, image, header, test=False, verbose=False, stack=20, correct_dead_pixels=True):
+        """
+        A bit higher level class assuming that the AquistionImage is used for Science
+        args:
+        image: a np.ndarray array. Test for up to 3D
+        header: a fits header image_object
+
+        kwargs:
+        stack: number of single exposures that are stacked, default=20
+        correct_dead_pixels: bool, if True dead pixels stored in the deadpixel mask are interpolated
+        test: bool if True implented autotests are preformed
+        verbose: bool if True code becomes talkative
+        
+        functions:
+        
+        self.get_science_fields()
+        kwargs:
+        crop_out: tuple, region to be cut out [px] default=(50,50) science fiber position +- 50 px
+        
+        sets attributes:
+        self.raw_image      the copy of the raw image as created in AquisitionImage
+        self.image          the nanmedian of all telescopes
+        self.sub_images     all four telescope images
+        
+        self.get_frames():
+        gets the frames according to the number of stacks
+        
+        sets attributes:
+            self.frames     the frames stacked according to self.stack
+            self.frame_times the respective times (buggy implementation of center time, neglible bug)
+            
+        self.get_frame_plot():
+        simple plot helper
+        
+        self.save_fits():
+        saves the science images to a HDUList fits file_names, naming convention is input file name + _aquisition_camera_cube.fits
+        args: 
+        store_dir the storage store_dir
+        cube                    = fits.PrimaryHDU(self.frames, header=self.header) PrimaryHDU holds the frames
+        raw                     = fits.ImageHDU(self.image) indivudal exposures
+        image                   = fits.ImageHDU(np.nanmedian(self.image, axis=0)) collapse image of the file
+        psf                     = fits.ImageHDU(self.psf) the psf extracted, WARNING PSF is shit, this should not be used.
+        """
+        
         super().__init__(image, header, test=test, verbose=verbose, correct_dead_pixels=correct_dead_pixels)
         self.stack              = int(stack)
         self.get_science_fields()
@@ -287,7 +435,7 @@ class ScienceImage(AquisitionImage):
             plt.show()
             
         self.raw_image          = self.image.copy()
-        self.image              = np.nanmedian(image, axis=(0)) ###BUG this definition is different form GalacticCenterImage, where self.image is just self.raw_image 
+        self.image              = np.nanmedian(np.array(image), axis=(0)) ###BUG this definition is different form GalacticCenterImage, where self.image is just self.raw_image --- ###WARNING not sure if thats actually true!
         self.sub_images         = np.array(image)
     
     
@@ -338,6 +486,33 @@ class ScienceImage(AquisitionImage):
         
 class GalacticCenterImage(ScienceImage):
     def __init__(self, image, header, test=False, verbose=False, correct_dead_pixels=True):
+        """
+        A bit higher level class assuming that the AquistionImage is used for Science
+        args:
+        image: a np.ndarray array. Test for up to 3D
+        header: a fits header image_object
+
+        kwargs:
+        stack: number of single exposures that are stacked, default=20
+        correct_dead_pixels: bool, if True dead pixels stored in the deadpixel mask are interpolated
+        test: bool if True implented autotests are preformed
+        verbose: bool if True code becomes talkative
+        
+        functions:
+        self.get_PSF()
+        gets a psf, dont use this - PSF is not good
+        
+        self.get_stars()
+        uses daophot to identify point sources in the image
+        
+        sets attributes:
+            self.sources    an astropy table containg the sources found!
+        
+        self.get_deconvolution():
+        does not work
+        
+        """
+        
         super().__init__(image, header, test=test, verbose=verbose, correct_dead_pixels=correct_dead_pixels)
         self.sources            = None
         
@@ -393,9 +568,7 @@ class GalacticCenterImage(ScienceImage):
             plt.plot(self.sources["xcentroid"], self.sources["ycentroid"], "o", color="white", alpha=0.5)
             plt.show()
             
-            
 
-        
     def get_deconvolution(self):
         from scipy.signal import  convolve2d
         from skimage import restoration

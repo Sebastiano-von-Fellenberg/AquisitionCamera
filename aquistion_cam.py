@@ -136,7 +136,6 @@ class ObservationNight(list):
             
         return np.array(shifted_cube)
     
-    
 class Image():
     def __init__(self, image, test=False, verbose=False):
         """

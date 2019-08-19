@@ -165,7 +165,7 @@ class AquisitionImage(Image):
         header: a fits header image_object
 
         kwargs:
-        correct_dead_pixels: bool, if True dead pixels stored in the deadpixel mask are interpolated
+        correct_dead_pixels: bool, if True dead pixels stored in the deadpixel mask are interpolated default: True
         test: bool if True implented autotests are preformed
         verbose: bool if True code becomes talkative
         
@@ -298,7 +298,7 @@ class AquisitionImage(Image):
         
         raise Exception("buggy implented")
         m0                      = rms(self.image)
-        if self. test:
+        if self.test:
             fig, axes           = plt.subplots(1,2)
             axes[0].imshow(np.nanmedian(m0, axis=0), origin="lower", norm=LogNorm())
             axes[1].imshow(np.nanmedian(self.image, axis=0), origin="lower", norm=LogNorm())
@@ -372,7 +372,7 @@ class AquisitionImage(Image):
     def get_time(self):
         time                    = np.cumsum(np.repeat(self.dit, self.ndit))
         time                    = np.array([np.timedelta64(int(ti*1000), "ms") for ti in time])
-        self.timestamps         = np.array([self.date + ti for ti in time])
+        self.timestamps         = np.array([self.date + ti for ti in time]) ## self.date == time_zero TODO Check this!
         self.timestamps_str     = np.array([str(pd.to_datetime(ti)) for ti in self.timestamps])
 
 class ScienceImage(AquisitionImage):

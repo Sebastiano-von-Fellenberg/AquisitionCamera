@@ -137,7 +137,6 @@ class ObservationNight(list):
         return np.array(shifted_cube)
     
     
-print("hi")
 
 
 class Image():

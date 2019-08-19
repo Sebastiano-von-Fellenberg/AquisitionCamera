@@ -6,6 +6,8 @@ from datetime import datetime
 import gc
 import pandas as pd
 
+from astropy.stats import SigmaClip
+from photutils import Background2D, MedianBackground
 
 from scipy.signal import correlate2d, convolve2d
 from scipy.ndimage import shift
@@ -24,7 +26,7 @@ def opener(path):
     
     files                       = []
     file_names                  = []
-    for fi in glob(path + "GRAVI.*fits"):
+    for fi in glob(path + "GRAVI.*fits")[:4]:
         if "aqu" not in fi:
             f0                      = fits.open(fi) 
             file_names.append(fi)
@@ -33,10 +35,11 @@ def opener(path):
     aquistion_images            = []
     names                       = []
     for fi, finame in zip(files, file_names):
+        print(finame)
         h0                      = fi[0].header 
         i0                      = fi[4].data
         n0                      = fi[0].header["ARCFILE"]
-        
+        print(h0["ESO INS SOBJ NAME"], h0["ESO DPR TYPE"])
         if "S2" in h0["ESO INS SOBJ NAME"] and "SKY" not in h0["ESO DPR TYPE"]:
             headers.append(h0)
             aquistion_images.append(i0)
@@ -211,7 +214,7 @@ class AquisitionImage(Image):
             self.mask the mask (np.ndarray)
         
         self.get_interpolation():
-        interpolates the dead pixels
+        interpolates the dead pixels and subtracts dark
         sets:
             self.image_uncorrected the raw image
             
@@ -237,6 +240,7 @@ class AquisitionImage(Image):
         self.get_ft_pos()
         self.get_time()
         self.load_bad_pixelmask()
+        self.load_dark()
         self.image_uncorrected = None
         if correct_dead_pixels:
             if self.verbose: print("Deadpixel correction, this takes some time... and comsumes fuck all memory")
@@ -319,30 +323,74 @@ class AquisitionImage(Image):
     def load_bad_pixelmask(self):
         data                    = fits.getdata("gvacq_DeadPixelMap.fits")
         mask                    = np.zeros_like(self.image[0])
-
+        
         mask[0:249, 0:249]      = data[self.ref_aqu[0,1]:self.ref_aqu[0,1]+249,self.ref_aqu[0,0]:self.ref_aqu[0,0]+249]
-        mask[0:250, 250:499]    = data[self.ref_aqu[1,1]:self.ref_aqu[1,1]+249,self.ref_aqu[1,0]:self.ref_aqu[1,0]+249]
+        mask[0:250, 250:499]    = data[self.ref_aqu[1,1]:self.ref_aqu[1,1]+249,self.ref_aqu[1,0]:self.ref_aqu[1,0]+249] ##BUG unclear why one goes 250
         mask[0:249, 500:749]    = data[self.ref_aqu[2,1]:self.ref_aqu[2,1]+249,self.ref_aqu[2,0]:self.ref_aqu[2,0]+249]
-        mask[0:249, 750:-1]       = data[self.ref_aqu[3,1]:self.ref_aqu[3,1]+249,self.ref_aqu[3,0]:self.ref_aqu[3,0]+249]
+        mask[0:249, 750:-1]     = data[self.ref_aqu[3,1]:self.ref_aqu[3,1]+249,self.ref_aqu[3,0]:self.ref_aqu[3,0]+249]
         
         self.mask               = np.tile(mask, (self.image.shape[0], 1, 1))
+        
+    
+    def load_dark(self):
+        dark                    = fits.getdata("ACQ_dark07_20171229_DIT.fits")
+        dark                    = np.nanmean(dark,0)
+        
+        if self.test:
+            plt.title("mean of dark")
+            plt.imshow(dark, origin="lower", norm=LogNorm())
+            plt.show()
+        data = np.zeros_like(self.image[0])
+        data[0:249, 0:249]      = dark[self.ref_aqu[0,1]:self.ref_aqu[0,1]+249,self.ref_aqu[0,0]:self.ref_aqu[0,0]+249]
+        data[0:250, 250:499]    = dark[self.ref_aqu[1,1]:self.ref_aqu[1,1]+249,self.ref_aqu[1,0]:self.ref_aqu[1,0]+249] ##BUG unclear why one goes 250
+        data[0:249, 500:749]    = dark[self.ref_aqu[2,1]:self.ref_aqu[2,1]+249,self.ref_aqu[2,0]:self.ref_aqu[2,0]+249]
+        data[0:249, 750:-1]     = dark[self.ref_aqu[3,1]:self.ref_aqu[3,1]+249,self.ref_aqu[3,0]:self.ref_aqu[3,0]+249]
+        data                    = np.tile(data, (self.image.shape[0], 1, 1))
+        self.dark               = data.copy()
+        if self.verbose:
+            print("dark shape:", self.dark.shape)
+
+        if self.test:
+            plt.title("the cut dark")
+            plt.imshow(np.nanmean(data,axis=0), origin="lower", norm=LogNorm())
+            plt.figure()
+            plt.title("Dark minus image")
+            plt.imshow(np.nanmean(self.image, axis=0) - np.mean(data, axis=0), origin="lower", norm=LogNorm())
+
+            plt.show()
         
     def get_interpolation(self):
         from astropy.convolution import Gaussian2DKernel, interpolate_replace_nans
         if self.mask is None: self.get_bad_pixelmask()
         
         mask                    = self.mask.copy()
-        image                   = self.image.copy()
+        image                   = self.image.copy() ## image uncorrected
+        image_dark              = image - self.dark ## image uncorrected, dark subtracted
         
-        image[mask == True]     = np.nan
+        image_dark[mask == True]     = np.nan
+        
         kernel                  = Gaussian2DKernel(y_stddev=1, x_stddev=1)
-        fixed_image             = np.array([interpolate_replace_nans(i, kernel) for i in image])
+        fixed_image             = np.array([interpolate_replace_nans(i, kernel) for i in image_dark])
         
         self.image_uncorrected  = self.image.copy()
         self.image              = fixed_image.copy()
         
+  
         
+       
         if self.test:
+            fig, axes = plt.subplots(1,3)
+            axes[0].imshow(np.nanmean(fixed_image, axis=0), origin='lower', norm=LogNorm(vmin=10, vmax=100))
+            #axes[0].suptitle('image, corrected, minus dark')
+            
+            axes[1].imshow(np.nanmean(image_dark, axis=0), origin='lower', norm=LogNorm(vmin=10, vmax=300))
+            
+            #axes[1].title('image, uncorrected, minus dark')
+            
+            axes[2].imshow(np.nanmean(image, axis=0), origin='lower', norm=LogNorm(vmin=10, vmax=300))
+            #axes[2].title('image, uncorrected')
+            plt.show()
+            
             print("The dead pixels are interpolated assuming the deadpixel mask stored in the module")
             fig, axes               = plt.subplots(1,2, figsize=(16,10))
             axes[0].imshow(np.nanmedian(self.image, axis=0), origin="lower", norm=LogNorm())
@@ -427,7 +475,8 @@ class ScienceImage(AquisitionImage):
         super().__init__(image, header, test=test, verbose=verbose, correct_dead_pixels=correct_dead_pixels)
         self.stack              = int(stack)
         self.get_science_fields()
-        self.get_frames()
+        self.get_sky_subtraction()
+        #self.get_frames()
         
         
     def get_science_fields(self, crop_out=(50, 50)):
@@ -448,6 +497,28 @@ class ScienceImage(AquisitionImage):
         self.image              = np.nanmedian(np.array(image), axis=(0)) ###BUG this definition is different form GalacticCenterImage, where self.image is just self.raw_image --- ###WARNING not sure if thats actually true!
         self.sub_images         = np.array(image)
     
+    def get_sky_subtraction(self):
+        workhorse               = self.image.copy()
+        workhorse               = np.nanmean(workhorse, axis=0)
+    
+        sigma_clip              = SigmaClip(sigma=3.)
+        bkg_estimator           = MedianBackground()
+        bkg                     = Background2D(workhorse, (10,10), filter_size=(3,3), sigma_clip = sigma_clip, bkg_estimator = bkg_estimator)
+        ## bkg = (data, box size for background estimation, filter size to median filter background estimation in boxes, sigma, background class)
+            
+        print(bkg.background_median)
+        print(bkg.background_rms_median)
+            
+        self.image_with_sky     = self.image.copy()
+        self.image              = workhorse.copy()
+        
+        fig, axes = plt.subplots(1,3)
+        axes[0].imshow(workhorse - bkg.background, origin='lower')
+                
+        axes[1].imshow(np.nanmean(self.image_with_sky, axis=0), origin='lower')
+                    
+        axes[2].imshow(bkg.background, origin='lower')
+        plt.show()
     
     def get_frames(self):
         ### BUG this implementation does not take the average time between and beging but the nearst index, lazyness.

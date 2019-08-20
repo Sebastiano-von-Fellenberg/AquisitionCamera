@@ -387,13 +387,13 @@ class AquisitionImage(Image):
         if self.test:
             fig, axes = plt.subplots(1,3)
             axes[0].imshow(np.nanmean(fixed_image, axis=0), origin='lower', norm=LogNorm(vmin=10, vmax=100))
-            axes[0].title.set_text("image corrected - dark")  
+            #axes[0].title.set_text("image corrected - dark")  
             
             axes[1].imshow(np.nanmean(image_dark, axis=0), origin='lower', norm=LogNorm(vmin=10, vmax=300))
-            axes[1].title.set_text("image uncorrected - dark")  
+            #axes[1].title.set_text("image uncorrected - dark")  
             
             axes[2].imshow(np.nanmean(image, axis=0), origin='lower', norm=LogNorm(vmin=10, vmax=300))
-            axes[0].title.set_text("image uncorrected")  
+            #axes[0].title.set_text("image uncorrected")  
 
             plt.show()
             
@@ -458,6 +458,12 @@ class ScienceImage(AquisitionImage):
         self.image          the nanmedian of all telescopes
         self.sub_images     all four telescope images
         
+        self.get_sky_subtraction()
+        kwargs:
+        sigma
+        box_size: Box size for background estimation
+        filter_size: Box size to filter median background in boxes
+        
         self.get_frames():
         gets the frames according to the number of stacks
         
@@ -517,10 +523,6 @@ class ScienceImage(AquisitionImage):
             box_size            = self.box_size
         if filter_size is None:
             filter_size         = self.filter_size
-            
-        ## TODO documentation 
-        ## TODO git commit + push
-        
         
         image                   = self.image.copy()
         image                   = np.nanmean(image, axis=0)
@@ -528,7 +530,6 @@ class ScienceImage(AquisitionImage):
         sigma_clip              = SigmaClip(sigma=sigma)
         bkg_estimator           = MedianBackground()
         bkg                     = Background2D(image, box_size, filter_size=filter_size, sigma_clip = sigma_clip, bkg_estimator = bkg_estimator)
-        ## bkg = (data, box size for background estimation, filter size to median filter background in boxes, sigma, background class)
             
         print('Median background: ', bkg.background_median)
         print('Median background rms: ', bkg.background_rms_median)
@@ -627,9 +628,7 @@ class GalacticCenterImage(ScienceImage):
         super().__init__(image, header, test=test, verbose=verbose, correct_dead_pixels=correct_dead_pixels)
         self.sources            = None
         self.get_stars()
-        ## TODO try to find S35 and S65 in all pictures
-        ## ==> create a function that finds S35, S65 
-        ## ==> set attroibutes self.S35 = [pos_x, pos_y, flux, ...] self.S65 = [pos_x, pos_y, flux, ...]
+        #self.get_S35_S65()
         
         
     def get_PSF(self, test=None):
@@ -684,6 +683,40 @@ class GalacticCenterImage(ScienceImage):
             plt.plot(self.sources["xcentroid"], self.sources["ycentroid"], "o", color="white", alpha=0.5)
             plt.show()
             
+    def get_S35_S65(self):
+        ## TODO try to find S35 and S65 in all pictures
+        ## ==> create a function that finds S35, S65 
+        ## ==> set attributes self.S35 = [pos_x, pos_y, flux, ...] self.S65 = [pos_x, pos_y, flux, ...]
+        pos_S35 = [14.5, 70]
+        pos_S65 = [10,26]
+        
+        S35_x = np.arange(pos_S35[0]-5., pos_S35[0]+5.)
+        S35_y = np.arange(pos_S35[1]-5., pos_S35[1]+5.)
+        S65_x = np.arange(pos_S65[0]-5., pos_S65[0]+5.)
+        S65_x = np.arange(pos_S65[1]-5., pos_S65[1]+5.)
+        
+        
+        for j in range(len(self.sources)):
+            x = self.sources['xcentroid'][j] 
+            y = self.sources['ycentroid'][j]
+            #print(x, y)
+            if S35_x[0] < x < S35_x[1] and S35_y[0] < y < S35_y[1]:
+                pos_x_S35 = x
+                pos_y_S35 = y
+                print(pos_x_S35, pos_y_S35)
+            if  S65_x[0] < x < S65_x[1] and S65_y[0] < y < S65_y[1]:
+                pos_x_S65 = x
+                pos_y_S65 = y 
+                print(pos_x_S65, pos_y_S65)
+                
+            
+            
+            
+        #self.S35 = [pox_x_S35, pos_y_S35, flux_S35, mag_S35]
+        #self.S65 = [pox_x_S56, pos_y_S65, flux_S65, mag_S65]
+        
+        
+        
 
     def get_deconvolution(self):
         from scipy.signal import  convolve2d

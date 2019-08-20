@@ -674,70 +674,63 @@ class GalacticCenterImage(ScienceImage):
         if test is None: test   = self.test
         from photutils import DAOStarFinder
         data                    = np.nanmedian(self.image, axis=0)
-        daofind                 = DAOStarFinder(fwhm=3.0, threshold=3.)
+        daofind                 = DAOStarFinder(fwhm=4.5, threshold=3.)
         self.sources            = daofind(data)
         
-        
+    
         if test:
             plt.imshow(data, origin="lower", norm=LogNorm(vmax=100))
             plt.plot(self.sources["xcentroid"], self.sources["ycentroid"], "o", color="white", alpha=0.5)
             plt.show()
             
-    def get_S35_S65(self):
-        ## TODO try to find S35 and S65 in all pictures
-        ## ==> create a function that finds S35, S65 
-        ## ==> set attributes self.S35 = [pos_x, pos_y, flux, ...] self.S65 = [pos_x, pos_y, flux, ...]
+        self.get_S35()
+        self.get_S65()
+            
+    def get_S35(self):
         pos_S35 = [14.5, 69.9]
+                
+        xcentroid = self.sources['xcentroid']
+        ycentroid = self.sources['ycentroid']
+        
+        args_x_S35 = np.where(np.isclose(xcentroid, pos_S35[0], atol=2.))[0]
+        args_y_S35 = np.where(np.isclose(ycentroid, pos_S35[1], atol=2.))[0]
+        
+        index_S35 = np.intersect1d(args_x_S35, args_y_S35)[0]
+        
+        x_S35 = self.sources['xcentroid'][index_S35]
+        y_S35 = self.sources['ycentroid'][index_S35]
+        
+        self.S35 = self.sources[index_S35]
+
+        plt.imshow(self.image.mean(axis=0), norm=LogNorm(), origin='lower')
+        plt.plot(x_S35, y_S35, 'o')
+        plt.xlim(0,100)
+        plt.ylim(0,100)
+        plt.show()  
+
+    def get_S65(self):
         pos_S65 = [10,26.7]
         
         xcentroid = self.sources['xcentroid']
         ycentroid = self.sources['ycentroid']
         flux = self.sources['flux']
-        mag = self.sources['mag']
         
-        args_x_S35 = np.where(np.isclose(xcentroid, pos_S35[0], atol=2.))[0]
-        args_y_S35 = np.where(np.isclose(ycentroid, pos_S35[1], atol=2.))[0]
         args_x_S65 = np.where(np.isclose(xcentroid, pos_S65[0], atol=2.))[0]
         args_y_S65 = np.where(np.isclose(ycentroid, pos_S65[1], atol=2.))[0]
-        print(args_x_S35, args_y_S35, args_x_S65, args_y_S65)
-        args_S35 =  args_x_S35[args_x_S35 == args_y_S35]
-        args_S65 =  args_x_S65[args_x_S65 == args_y_S65]
         
-        print(args_S35, args_S65)
-        pos_x_S35 = xcentroid[np.isclose(xcentroid, pos_S35[0], atol=2.)]
+        index_S65 = np.intersect1d(args_x_S65, args_y_S65)[0]
         
-        pos_y_S35 = ycentroid[np.isclose(ycentroid, pos_S35[1], atol=2.)]
-        pos_x_S65 = xcentroid[np.isclose(xcentroid, pos_S65[0], atol=2.)]
-        pos_y_S65 = ycentroid[np.isclose(ycentroid, pos_S65[1], atol=2.)]
+        x_S65 = self.sources['xcentroid'][index_S65]
+        y_S65 = self.sources['ycentroid'][index_S65]
         
-        if np.where(xcentroid == pos_x_S35) == np.where(ycentroid == pos_y_S35):
-            #Only if pos has one value
-            flux_S35 = flux[np.where(ycentroid==pos_y_S35)[0][0]]
-            mag_S35 = mag[np.where(ycentroid==pos_y_S35)[0][0]]
-            #print(flux_S35, mag_S35)
-        print(pos_x_S65, pos_y_S65)
-        #print(xcentroid[xcentroid == pos_x_S65])
-        #print(ycentroid[ycentroid == pos_y_S65])
-        #print(flux[(xcentroid == pos_x_S65) & (ycentroid == pos_y_S65)])
-        if np.where(xcentroid == pos_x_S65) == np.where(ycentroid==pos_y_S65):
-            print(1)
-            
-            
-            """
-            flux_S65 = flux[np.where(ycentroid==pos_y_S65)[0][0]]
-            mag_S65 = mag[np.where(ycentroid==pos_y_S65)[0][0]]
-            print(flux_S65, mag_S65)      
-            print(self.sources[np.where(ycentroid==pos_y_S65)[0][0]])
-            """
-            
-            
-            
-        #self.S35 = [pox_x_S35, pos_y_S35, flux_S35, mag_S35]
-        #self.S65 = [pox_x_S56, pos_y_S65, flux_S65, mag_S65]
+        self.S65 = self.sources[index_S65]
         
+        plt.imshow(self.image.mean(axis=0), norm=LogNorm(), origin='lower')
+        plt.plot(x_S65, y_S65, 'o')
+        plt.xlim(0,100)
+        plt.ylim(0,100)
+        plt.show()
         
-        
-
     def get_deconvolution(self):
         from scipy.signal import  convolve2d
         from skimage import restoration

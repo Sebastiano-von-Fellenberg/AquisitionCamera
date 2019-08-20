@@ -687,28 +687,48 @@ class GalacticCenterImage(ScienceImage):
         ## TODO try to find S35 and S65 in all pictures
         ## ==> create a function that finds S35, S65 
         ## ==> set attributes self.S35 = [pos_x, pos_y, flux, ...] self.S65 = [pos_x, pos_y, flux, ...]
-        pos_S35 = [14.5, 70]
-        pos_S65 = [10,26]
+        pos_S35 = [14.5, 69.9]
+        pos_S65 = [10,26.7]
         
-        S35_x = np.arange(pos_S35[0]-5., pos_S35[0]+5.)
-        S35_y = np.arange(pos_S35[1]-5., pos_S35[1]+5.)
-        S65_x = np.arange(pos_S65[0]-5., pos_S65[0]+5.)
-        S65_x = np.arange(pos_S65[1]-5., pos_S65[1]+5.)
+        xcentroid = self.sources['xcentroid']
+        ycentroid = self.sources['ycentroid']
+        flux = self.sources['flux']
+        mag = self.sources['mag']
         
+        args_x_S35 = np.where(np.isclose(xcentroid, pos_S35[0], atol=2.))[0]
+        args_y_S35 = np.where(np.isclose(ycentroid, pos_S35[1], atol=2.))[0]
+        args_x_S65 = np.where(np.isclose(xcentroid, pos_S65[0], atol=2.))[0]
+        args_y_S65 = np.where(np.isclose(ycentroid, pos_S65[1], atol=2.))[0]
+        print(args_x_S35, args_y_S35, args_x_S65, args_y_S65)
+        args_S35 =  args_x_S35[args_x_S35 == args_y_S35]
+        args_S65 =  args_x_S65[args_x_S65 == args_y_S65]
         
-        for j in range(len(self.sources)):
-            x = self.sources['xcentroid'][j] 
-            y = self.sources['ycentroid'][j]
-            #print(x, y)
-            if S35_x[0] < x < S35_x[1] and S35_y[0] < y < S35_y[1]:
-                pos_x_S35 = x
-                pos_y_S35 = y
-                print(pos_x_S35, pos_y_S35)
-            if  S65_x[0] < x < S65_x[1] and S65_y[0] < y < S65_y[1]:
-                pos_x_S65 = x
-                pos_y_S65 = y 
-                print(pos_x_S65, pos_y_S65)
-                
+        print(args_S35, args_S65)
+        pos_x_S35 = xcentroid[np.isclose(xcentroid, pos_S35[0], atol=2.)]
+        
+        pos_y_S35 = ycentroid[np.isclose(ycentroid, pos_S35[1], atol=2.)]
+        pos_x_S65 = xcentroid[np.isclose(xcentroid, pos_S65[0], atol=2.)]
+        pos_y_S65 = ycentroid[np.isclose(ycentroid, pos_S65[1], atol=2.)]
+        
+        if np.where(xcentroid == pos_x_S35) == np.where(ycentroid == pos_y_S35):
+            #Only if pos has one value
+            flux_S35 = flux[np.where(ycentroid==pos_y_S35)[0][0]]
+            mag_S35 = mag[np.where(ycentroid==pos_y_S35)[0][0]]
+            #print(flux_S35, mag_S35)
+        print(pos_x_S65, pos_y_S65)
+        #print(xcentroid[xcentroid == pos_x_S65])
+        #print(ycentroid[ycentroid == pos_y_S65])
+        #print(flux[(xcentroid == pos_x_S65) & (ycentroid == pos_y_S65)])
+        if np.where(xcentroid == pos_x_S65) == np.where(ycentroid==pos_y_S65):
+            print(1)
+            
+            
+            """
+            flux_S65 = flux[np.where(ycentroid==pos_y_S65)[0][0]]
+            mag_S65 = mag[np.where(ycentroid==pos_y_S65)[0][0]]
+            print(flux_S65, mag_S65)      
+            print(self.sources[np.where(ycentroid==pos_y_S65)[0][0]])
+            """
             
             
             

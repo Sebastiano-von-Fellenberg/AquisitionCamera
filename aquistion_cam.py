@@ -144,6 +144,8 @@ class ObservationNight(list):
         return np.array(shifted_cube)
     
     
+    
+    
 
 
 class Image():
@@ -209,6 +211,9 @@ class AquisitionImage(Image):
         
         self.load_bad_pixelmask():
         gets the bad pixel mask stored in the module
+        
+        self.load_dark():
+        loads dark and subtracts it from image
         
         sets attributes:
             self.mask the mask (np.ndarray)
@@ -340,6 +345,7 @@ class AquisitionImage(Image):
             plt.title("mean of dark")
             plt.imshow(dark, origin="lower", norm=LogNorm())
             plt.show()
+            
         data = np.zeros_like(self.image[0])
         data[0:249, 0:249]      = dark[self.ref_aqu[0,1]:self.ref_aqu[0,1]+249,self.ref_aqu[0,0]:self.ref_aqu[0,0]+249]
         data[0:250, 250:499]    = dark[self.ref_aqu[1,1]:self.ref_aqu[1,1]+249,self.ref_aqu[1,0]:self.ref_aqu[1,0]+249] ##BUG unclear why one goes 250
@@ -381,14 +387,14 @@ class AquisitionImage(Image):
         if self.test:
             fig, axes = plt.subplots(1,3)
             axes[0].imshow(np.nanmean(fixed_image, axis=0), origin='lower', norm=LogNorm(vmin=10, vmax=100))
-            #axes[0].suptitle('image, corrected, minus dark')
+            axes[0].title.set_text("image corrected - dark")  
             
             axes[1].imshow(np.nanmean(image_dark, axis=0), origin='lower', norm=LogNorm(vmin=10, vmax=300))
-            
-            #axes[1].title('image, uncorrected, minus dark')
+            axes[1].title.set_text("image uncorrected - dark")  
             
             axes[2].imshow(np.nanmean(image, axis=0), origin='lower', norm=LogNorm(vmin=10, vmax=300))
-            #axes[2].title('image, uncorrected')
+            axes[0].title.set_text("image uncorrected")  
+
             plt.show()
             
             print("The dead pixels are interpolated assuming the deadpixel mask stored in the module")
@@ -428,7 +434,7 @@ class AquisitionImage(Image):
         self.timestamps_str     = np.array([str(pd.to_datetime(ti)) for ti in self.timestamps])
 
 class ScienceImage(AquisitionImage):
-    def __init__(self, image, header, test=False, verbose=False, stack=20, correct_dead_pixels=True):
+    def __init__(self, image, header, test=False, verbose=False, stack=20, correct_dead_pixels=True, sigma=3., box_size=(10,10), filter_size=(3,3)):
         """
         A bit higher level class assuming that the AquistionImage is used for Science
         args:
@@ -473,9 +479,16 @@ class ScienceImage(AquisitionImage):
         """
         
         super().__init__(image, header, test=test, verbose=verbose, correct_dead_pixels=correct_dead_pixels)
+        # set attributes
         self.stack              = int(stack)
+        # sky subtraction controlls
+        self.sigma, self.box_size, self.filter_size = sigma, box_size, filter_size
+        
+        
         self.get_science_fields()
         self.get_sky_subtraction()
+        
+    
         #self.get_frames()
         
         
@@ -497,28 +510,45 @@ class ScienceImage(AquisitionImage):
         self.image              = np.nanmedian(np.array(image), axis=(0)) ###BUG this definition is different form GalacticCenterImage, where self.image is just self.raw_image --- ###WARNING not sure if thats actually true!
         self.sub_images         = np.array(image)
     
-    def get_sky_subtraction(self):
-        workhorse               = self.image.copy()
-        workhorse               = np.nanmean(workhorse, axis=0)
-    
-        sigma_clip              = SigmaClip(sigma=3.)
-        bkg_estimator           = MedianBackground()
-        bkg                     = Background2D(workhorse, (10,10), filter_size=(3,3), sigma_clip = sigma_clip, bkg_estimator = bkg_estimator)
-        ## bkg = (data, box size for background estimation, filter size to median filter background estimation in boxes, sigma, background class)
+    def get_sky_subtraction(self, sigma=None, box_size=None, filter_size=None):
+        if sigma is None:
+            sigma               = self.sigma
+        if box_size is None:
+            box_size            = self.box_size
+        if filter_size is None:
+            filter_size         = self.filter_size
             
-        print(bkg.background_median)
-        print(bkg.background_rms_median)
-            
-        self.image_with_sky     = self.image.copy()
-        self.image              = workhorse.copy()
+        ## TODO documentation 
+        ## TODO git commit + push
         
-        fig, axes = plt.subplots(1,3)
-        axes[0].imshow(workhorse - bkg.background, origin='lower')
-                
-        axes[1].imshow(np.nanmean(self.image_with_sky, axis=0), origin='lower')
-                    
-        axes[2].imshow(bkg.background, origin='lower')
-        plt.show()
+        
+        image                   = self.image.copy()
+        image                   = np.nanmean(image, axis=0)
+    
+        sigma_clip              = SigmaClip(sigma=sigma)
+        bkg_estimator           = MedianBackground()
+        bkg                     = Background2D(image, box_size, filter_size=filter_size, sigma_clip = sigma_clip, bkg_estimator = bkg_estimator)
+        ## bkg = (data, box size for background estimation, filter size to median filter background in boxes, sigma, background class)
+            
+        print('Median background: ', bkg.background_median)
+        print('Median background rms: ', bkg.background_rms_median)
+            
+        #self.image_with_sky     = self.image.copy()
+        #self.image              = workhorse.copy()
+        
+        if self.test:
+            fig, axes = plt.subplots(1,3)
+            b = image - bkg.background
+            axes[0].imshow(b - b.min(), origin='lower', norm=LogNorm(vmax=300))
+            axes[0].title.set_text("image - background")  
+            
+            axes[1].imshow(np.nanmean(self.image, axis=0), origin='lower', norm=LogNorm(vmax=300))
+            axes[1].title.set_text("image")            
+            
+            axes[2].imshow(bkg.background, origin='lower', norm=LogNorm(vmax=300))
+            axes[2].title.set_text("background")
+            
+            plt.show()
     
     def get_frames(self):
         ### BUG this implementation does not take the average time between and beging but the nearst index, lazyness.
@@ -596,6 +626,11 @@ class GalacticCenterImage(ScienceImage):
         
         super().__init__(image, header, test=test, verbose=verbose, correct_dead_pixels=correct_dead_pixels)
         self.sources            = None
+        self.get_stars()
+        ## TODO try to find S35 and S65 in all pictures
+        ## ==> create a function that finds S35, S65 
+        ## ==> set attroibutes self.S35 = [pos_x, pos_y, flux, ...] self.S65 = [pos_x, pos_y, flux, ...]
+        
         
     def get_PSF(self, test=None):
         if test is None: test   = self.test

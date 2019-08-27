@@ -7,6 +7,7 @@ import gc
 import pandas as pd
 
 from astropy.stats import SigmaClip
+from astropy.time import Time as AstropyTime
 from photutils import Background2D, MedianBackground
 
 from scipy.signal import correlate2d, convolve2d
@@ -26,7 +27,7 @@ def opener(path):
     
     files                       = []
     file_names                  = []
-    for fi in glob(path + "GRAVI.*fits")[:4]:
+    for fi in np.sort(glob(path + "GRAVI.*fits"))[:4]:
         if "aqu" not in fi:
             f0                      = fits.open(fi) 
             file_names.append(fi)
@@ -49,7 +50,7 @@ def opener(path):
 
 
 class ObservationNight(list):
-    def __init__(self, path, gc=True, savedir=None):
+    def __init__(self, path, gc=True, savedir=None, test=False, verbose=False):
         """
         Reduces all images in the path
         args:
@@ -90,6 +91,9 @@ class ObservationNight(list):
         """
         self.path               = path
         self.gc                 = gc
+        self.test               = test
+        self.verbose            = verbose
+        
         self.image_objects      = None
         
         if savedir is None:
@@ -97,8 +101,11 @@ class ObservationNight(list):
         else:
             self.savedir        = savedir
         
+        
         self.aquistion_images, self.headers = opener(self.path)
-    
+        self.get_reduction()
+        self.get_reference_frame()
+
     def get_reduction(self):
         self.image_objects      = []
         if self.gc:
@@ -109,6 +116,8 @@ class ObservationNight(list):
         else:
             for i, h in zip(self.aquistion_images, self.headers):
                 self.image_objects.append(ScienceImage(i, h))
+        del(o)
+        gc.collect()
     
     def save(self, overwrite=False):
         for io in self.image_objects:
@@ -118,11 +127,11 @@ class ObservationNight(list):
         for io in self.image_objects:
             nightcube.append(np.nanmedian(io.image, axis=0))
         self.nightcube          = np.array(nightcube)
-        self.shifted_cube       = self.shiftcube()
         
-        fits.writeto(self.savedir + "aquistion_nightcube.fits", np.array(nightcube), overwrite=overwrite)
-        fits.writeto(self.savedir + "aquistion_shifted_nightcube.fits", np.array(self.shifted_cube), overwrite=overwrite)
-        
+        fits.writeto(self.savedir + "aquistion_raw_cube.fits", np.array(nightcube), overwrite=overwrite)
+        fits.writeto(self.savedir + "aquistion_shifted_cube.fits", np.array(self.shifted_images), overwrite=overwrite)
+        fits.writeto(self.savedir + "aquistion_shifted_frames_cube.fits", np.array(self.shifted_frames), overwrite=overwrite)
+
     def aligncube(self, x0, y0, search_box=5):
         positions = []
         shifted_cube =[]
@@ -143,8 +152,74 @@ class ObservationNight(list):
             
         return np.array(shifted_cube)
     
-    
-    
+    def get_reference_frame(self):
+        #Documentation
+
+        position_S65 = []
+        self.mask = []
+        for obj in self.image_objects:
+            obj.get_stars()
+            if obj.S65 == None:
+                position_S65.append((0., 0.))
+                self.mask.append(False)
+            else:
+                position_S65.append((obj.S65[1], obj.S65[2]))
+                self.mask.append(True)
+            
+        for index in range(len(position_S65)):
+            if position_S65[index][0] == 0. and position_S65[index][1] == 0.:
+                self.x0 = position_S65[index+1][0]
+                self.y0 = position_S65[index+1][1]         
+
+        self.shifted_list = [(self.x0-position_S65[j][0], self.y0-position_S65[j][1]) if position_S65[j][1] != 0. and position_S65[j][0] != 0. else (0.,0.) for j in range(len(position_S65))]
+  
+    def get_alignment(self):
+        #Documentation
+        shifted_images_mean = []
+        shifted_images_frames = []
+        time_frames = []
+        
+        for index, image_object in enumerate(self.image_objects):
+            shifted_image = shift(image_object.image, (self.shifted_list[index][0], self.shifted_list[index][1]))
+            t = AstropyTime(image_object.date + np.timedelta64(np.round(image_object.ndit/2*image_object.dit*1000).astype(int), "ms")).decimalyear
+            shifted_image[0,0] = np.array((t))
+            shifted_image[0,1] = np.array((self.mask[index]))
+            shifted_images_mean.append(shifted_image)
+
+            for f, f_t in zip(image_object.frames, image_object.frame_times):
+                shifted_frame = shift(f, (self.shifted_list[index][0], self.shifted_list[index][1]))
+                time = AstropyTime(f_t).decimalyear
+                shifted_frame[0,0] = np.array((time))
+                shifted_frame[0,1] = np.array((self.mask[index]))
+                time_frames.append(time)
+                shifted_images_frames.append(shifted_frame)
+
+
+
+
+
+            if self.test:
+                plt.figure()
+                plt.imshow(shifted_images_mean[index], origin='lower', norm=LogNorm())
+                plt.plot(self.x0, self.y0, 'o', color='black')
+        
+        
+            
+            
+        
+        
+        
+        
+        self.shifted_images = np.array(shifted_images_mean)
+        self.shifted_frames = np.array(shifted_images_frames)
+
+        if self.test:
+            print("If this is slow, close by hand!")
+            plt.show()
+            plt.close()
+            
+        
+
     
 
 
@@ -353,6 +428,7 @@ class AquisitionImage(Image):
         data[0:249, 750:-1]     = dark[self.ref_aqu[3,1]:self.ref_aqu[3,1]+249,self.ref_aqu[3,0]:self.ref_aqu[3,0]+249]
         data                    = np.tile(data, (self.image.shape[0], 1, 1))
         self.dark               = data.copy()
+        
         if self.verbose:
             print("dark shape:", self.dark.shape)
 
@@ -495,7 +571,7 @@ class ScienceImage(AquisitionImage):
         self.get_sky_subtraction()
         
     
-        #self.get_frames()
+        self.get_frames()
         
         
     def get_science_fields(self, crop_out=(50, 50)):
@@ -523,27 +599,37 @@ class ScienceImage(AquisitionImage):
             box_size            = self.box_size
         if filter_size is None:
             filter_size         = self.filter_size
-        
+            
+        self.cube               = self.image.copy()
         image                   = self.image.copy()
-        image                   = np.nanmean(image, axis=0)
+        image                   = np.nanmedian(image, axis=0)
     
         sigma_clip              = SigmaClip(sigma=sigma)
         bkg_estimator           = MedianBackground()
         bkg                     = Background2D(image, box_size, filter_size=filter_size, sigma_clip = sigma_clip, bkg_estimator = bkg_estimator)
-            
-        print('Median background: ', bkg.background_median)
-        print('Median background rms: ', bkg.background_rms_median)
-            
-        #self.image_with_sky     = self.image.copy()
-        #self.image              = workhorse.copy()
+        
+        self.image_with_background = image
+        b                       = image - bkg.background
+        self.image              = b-b.min()
+        self.cube_with_background = self.cube.copy()
+        self.cube               = [(c - bkg.background) for c in self.cube]
+        self.cube               = np.array([c - c.min() for c in self.cube])
+        
+        #plt.imshow(self.image_corrected, origin='lower', norm=LogNorm(vmax=100))
+        #plt.show()
+
+
+        if self.verbose:    
+            print('Median background: ', bkg.background_median)
+            print('Median background rms: ', bkg.background_rms_median)
         
         if self.test:
             fig, axes = plt.subplots(1,3)
             b = image - bkg.background
-            axes[0].imshow(b - b.min(), origin='lower', norm=LogNorm(vmax=300))
+            axes[0].imshow(self.image, origin='lower', norm=LogNorm(vmax=300))
             axes[0].title.set_text("image - background")  
             
-            axes[1].imshow(np.nanmean(self.image, axis=0), origin='lower', norm=LogNorm(vmax=300))
+            axes[1].imshow(self.image, origin='lower', norm=LogNorm(vmax=300))
             axes[1].title.set_text("image")            
             
             axes[2].imshow(bkg.background, origin='lower', norm=LogNorm(vmax=300))
@@ -555,7 +641,7 @@ class ScienceImage(AquisitionImage):
         ### BUG this implementation does not take the average time between and beging but the nearst index, lazyness.
         c                       = 0
         frames, frame_times, f0 = [], [], []
-        for index, i in enumerate(self.image):
+        for index, i in enumerate(self.cube):
             c                   +=1
             if c <= self.stack:
                 f0.append(i)
@@ -566,6 +652,8 @@ class ScienceImage(AquisitionImage):
                 
         self.frames             = np.array(frames)
         self.frame_times        = np.array(frame_times)
+        del(frames, frame_times)
+        gc.collect()
         if self.test:
             plt.plot(self.timestamps,'.')
             plt.plot(frame_times, "o")
@@ -582,8 +670,8 @@ class ScienceImage(AquisitionImage):
         name                    = store_dir + self.name[:-5] + "_aquisition_camera_cube.fits"
         
         cube                    = fits.PrimaryHDU(self.frames, header=self.header)
-        raw                     = fits.ImageHDU(self.image)
-        image                   = fits.ImageHDU(np.nanmedian(self.image, axis=0))
+        raw                     = fits.ImageHDU(self.raw_image)
+        image                   = fits.ImageHDU(self.image)
         
         try:
             psf                 = fits.ImageHDU(self.psf)
@@ -628,7 +716,6 @@ class GalacticCenterImage(ScienceImage):
         super().__init__(image, header, test=test, verbose=verbose, correct_dead_pixels=correct_dead_pixels)
         self.sources            = None
         self.get_stars()
-        #self.get_S35_S65()
         
         
     def get_PSF(self, test=None):
@@ -637,7 +724,7 @@ class GalacticCenterImage(ScienceImage):
         from astropy.nddata import NDData
         from photutils.psf import extract_stars
         from scipy.interpolate import interp2d        
-        data                    = np.nanmedian(self.image, axis=0)
+        data                    = self.image.copy()
 
         psf_stars_x             = [19, 54, 71, 60, 78, 74, 68, 81]
         psf_stars_y             = [69, 32, 58, 54, 50, 17, 36, 61]
@@ -673,7 +760,7 @@ class GalacticCenterImage(ScienceImage):
     def get_stars(self, test=None):
         if test is None: test   = self.test
         from photutils import DAOStarFinder
-        data                    = np.nanmedian(self.image, axis=0)
+        data                    = self.image.copy()
         daofind                 = DAOStarFinder(fwhm=4.5, threshold=3.)
         self.sources            = daofind(data)
         
@@ -683,33 +770,52 @@ class GalacticCenterImage(ScienceImage):
             plt.plot(self.sources["xcentroid"], self.sources["ycentroid"], "o", color="white", alpha=0.5)
             plt.show()
             
-        self.get_S35()
-        self.get_S65()
+        try:
+            self.get_S30()
+        except IndexError:
+            self.S30 = None
+        try:
+            self.get_S65()
+        except IndexError:
+            self.S65 = None
+        try:
+            self.get_S2()
+        except IndexError:
+            self.S2 = None
+        try:
+            self.get_S10()
+        except IndexError:
+            self.S10 = None
+        try:
+            self.get_S4()   
+        except IndexError:
+            self.S4 = None
             
-    def get_S35(self):
-        pos_S35 = [14.5, 69.9]
+    def get_S30(self):
+        pos_S30 = [14.5, 69.9]                                                     
                 
         xcentroid = self.sources['xcentroid']
         ycentroid = self.sources['ycentroid']
         
-        args_x_S35 = np.where(np.isclose(xcentroid, pos_S35[0], atol=2.))[0]
-        args_y_S35 = np.where(np.isclose(ycentroid, pos_S35[1], atol=2.))[0]
+        args_x_S30 = np.where(np.isclose(xcentroid, pos_S30[0], atol=2.))[0]
+        args_y_S30 = np.where(np.isclose(ycentroid, pos_S30[1], atol=2.))[0]
         
-        index_S35 = np.intersect1d(args_x_S35, args_y_S35)[0]
+        index_S30 = np.intersect1d(args_x_S30, args_y_S30)[0]
         
-        x_S35 = self.sources['xcentroid'][index_S35]
-        y_S35 = self.sources['ycentroid'][index_S35]
+        x_S30 = self.sources['xcentroid'][index_S30]
+        y_S30 = self.sources['ycentroid'][index_S30]
         
-        self.S35 = self.sources[index_S35]
-
-        plt.imshow(self.image.mean(axis=0), norm=LogNorm(), origin='lower')
-        plt.plot(x_S35, y_S35, 'o')
-        plt.xlim(0,100)
-        plt.ylim(0,100)
-        plt.show()  
+        self.S30 = self.sources[index_S30]
+        
+        if self.test:
+            plt.imshow(self.image, norm=LogNorm(), origin='lower')
+            plt.plot(x_S30, y_S30, 'o')
+            plt.xlim(0,100)
+            plt.ylim(0,100)
+            plt.show()  
 
     def get_S65(self):
-        pos_S65 = [10,26.7]
+        pos_S65 = [10,26.7]                                                         #wrong name for star
         
         xcentroid = self.sources['xcentroid']
         ycentroid = self.sources['ycentroid']
@@ -725,17 +831,90 @@ class GalacticCenterImage(ScienceImage):
         
         self.S65 = self.sources[index_S65]
         
-        plt.imshow(self.image.mean(axis=0), norm=LogNorm(), origin='lower')
-        plt.plot(x_S65, y_S65, 'o')
-        plt.xlim(0,100)
-        plt.ylim(0,100)
-        plt.show()
+        if self.test:
+            plt.imshow(self.image, norm=LogNorm(), origin='lower')
+            plt.plot(x_S65, y_S65, 'o')
+            plt.xlim(0,100)
+            plt.ylim(0,100)
+            plt.show()
+        
+    def get_S2(self):
+        pos_S2 = [49,54.4]
+        
+        xcentroid = self.sources['xcentroid']
+        ycentroid = self.sources['ycentroid']
+        flux = self.sources['flux']
+        
+        args_x_S2 = np.where(np.isclose(xcentroid, pos_S2[0], atol=2.))[0]
+        args_y_S2 = np.where(np.isclose(ycentroid, pos_S2[1], atol=2.))[0]
+        
+        index_S2 = np.intersect1d(args_x_S2, args_y_S2)[0]
+        
+        x_S2 = self.sources['xcentroid'][index_S2]
+        y_S2 = self.sources['ycentroid'][index_S2]
+        
+        self.S2 = self.sources[index_S2]
+        
+        if self.test:
+            plt.imshow(self.image, norm=LogNorm(), origin='lower')
+            plt.plot(x_S2, y_S2, 'o')
+            plt.xlim(0,100)
+            plt.ylim(0,100)
+            plt.show()
+        
+    def get_S10(self):
+        pos_S10 = [48,31.3]
+        
+        xcentroid = self.sources['xcentroid']
+        ycentroid = self.sources['ycentroid']
+        flux = self.sources['flux']
+        
+        args_x_S10 = np.where(np.isclose(xcentroid, pos_S10[0], atol=2.))[0]
+        args_y_S10 = np.where(np.isclose(ycentroid, pos_S10[1], atol=2.))[0]
+        
+        index_S10 = np.intersect1d(args_x_S10, args_y_S10)[0]
+        
+        x_S10 = self.sources['xcentroid'][index_S10]
+        y_S10 = self.sources['ycentroid'][index_S10]
+        
+        self.S10 = self.sources[index_S10]
+        
+        if self.test:
+            plt.imshow(self.image, norm=LogNorm(), origin='lower')
+            plt.plot(x_S10, y_S10, 'o')
+            plt.xlim(0,100)
+            plt.ylim(0,100)
+            plt.show()
+        
+    def get_S4(self):
+        pos_S4 = [66,56.5]
+        
+        xcentroid = self.sources['xcentroid']
+        ycentroid = self.sources['ycentroid']
+        flux = self.sources['flux']
+        
+        args_x_S4 = np.where(np.isclose(xcentroid, pos_S4[0], atol=2.))[0]
+        args_y_S4 = np.where(np.isclose(ycentroid, pos_S4[1], atol=2.))[0]
+        
+        index_S4 = np.intersect1d(args_x_S4, args_y_S4)[0]
+        
+        x_S4 = self.sources['xcentroid'][index_S4]
+        y_S4 = self.sources['ycentroid'][index_S4]
+        
+        self.S4 = self.sources[index_S4]
+        
+        if self.test:
+            plt.imshow(self.image, norm=LogNorm(), origin='lower')
+            plt.plot(x_S4, y_S4, 'o')
+            plt.xlim(0,100)
+            plt.ylim(0,100)
+            plt.show()
         
     def get_deconvolution(self):
         from scipy.signal import  convolve2d
         from skimage import restoration
         
-        data                    = np.nanmedian(self.image, axis=0)
+        data                    = self.image.copy()
         
         #deconvolved_RL = restoration.unsupervised_wiener(data, self.psf)
         

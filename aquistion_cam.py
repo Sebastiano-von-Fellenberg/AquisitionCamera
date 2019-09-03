@@ -27,8 +27,8 @@ def opener(path):
     
     files                       = []
     file_names                  = []
-    for fi in np.sort(glob(path + "GRAVI.*fits"))[:4]:
-        if "aqu" not in fi:
+    for fi in np.sort(glob(path + "GRAVI.*fits"))[:3]:
+        if "aqu" not in fi and fi != "/media/gfolchi/sefe/GRAVITY/2019-07-16/GRAVI.2019-07-18T02:03:32.407.fits":
             f0                      = fits.open(fi) 
             file_names.append(fi)
             files.append(f0)
@@ -88,6 +88,20 @@ class ObservationNight(list):
         search_box is the search range in which S35 is searched (or the star at x0, y0)
         
         returns the shifted cube
+        
+        
+        self.get_reference_frame():
+        Determines position of S65 for each image and creates a list with displacement of S65 from first image
+        
+        sets attributes:
+            self.position_S65, self.mask, self.x0, self.y0, self.shifted_list
+            
+            
+        self.get_alignment()
+        shifts images and frames into cube according to self.shifted_list, sets time in [:,0,0] and mask in [:,0,1]
+        
+        sets attributes:
+            self.shifted_images, self.shifted_frames, self.time_images, self.time_frames
         """
         self.path               = path
         self.gc                 = gc
@@ -105,6 +119,7 @@ class ObservationNight(list):
         self.aquistion_images, self.headers = opener(self.path)
         self.get_reduction()
         self.get_reference_frame()
+        #self.get_alignment()
 
     def get_reduction(self):
         self.image_objects      = []
@@ -153,31 +168,35 @@ class ObservationNight(list):
         return np.array(shifted_cube)
     
     def get_reference_frame(self):
-        #Documentation
-
-        position_S65 = []
+        self.position_S65 = []
         self.mask = []
         for obj in self.image_objects:
             obj.get_stars()
             if obj.S65 == None:
-                position_S65.append((0., 0.))
+                self.position_S65.append((0., 0.))
                 self.mask.append(False)
             else:
-                position_S65.append((obj.S65[1], obj.S65[2]))
+                self.position_S65.append((obj.S65[1], obj.S65[2]))
                 self.mask.append(True)
             
-        for index in range(len(position_S65)):
-            if position_S65[index][0] == 0. and position_S65[index][1] == 0.:
-                self.x0 = position_S65[index+1][0]
-                self.y0 = position_S65[index+1][1]         
+        if self.position_S65[0][0] != 0. and self.position_S65[0][1] != 0.:
+            self.x0 = self.position_S65[0][0]
+            self.y0 = self.position_S65[0][1]
+        
+        for index in range(len(self.position_S65)):
+            while self.position_S65[index][0] == 0. and self.position_S65[index][1] == 0.:
+                self.x0 = self.position_S65[index+1][0]
+                self.y0 = self.position_S65[index+1][1]
+                if self.position_S65[index+1][0] != 0.:
+                    break
 
-        self.shifted_list = [(self.x0-position_S65[j][0], self.y0-position_S65[j][1]) if position_S65[j][1] != 0. and position_S65[j][0] != 0. else (0.,0.) for j in range(len(position_S65))]
-  
+        self.shifted_list = [(self.x0-self.position_S65[j][0], self.y0-self.position_S65[j][1]) if self.position_S65[j][1] != 0. and self.position_S65[j][0] != 0. else (0.,0.) for j in range(len(self.position_S65))]
+        
     def get_alignment(self):
-        #Documentation
         shifted_images_mean = []
         shifted_images_frames = []
-        time_frames = []
+        self.time_images = []
+        self.time_frames = []
         
         for index, image_object in enumerate(self.image_objects):
             shifted_image = shift(image_object.image, (self.shifted_list[index][0], self.shifted_list[index][1]))
@@ -185,30 +204,20 @@ class ObservationNight(list):
             shifted_image[0,0] = np.array((t))
             shifted_image[0,1] = np.array((self.mask[index]))
             shifted_images_mean.append(shifted_image)
+            self.time_images.append(t)
 
             for f, f_t in zip(image_object.frames, image_object.frame_times):
                 shifted_frame = shift(f, (self.shifted_list[index][0], self.shifted_list[index][1]))
                 time = AstropyTime(f_t).decimalyear
                 shifted_frame[0,0] = np.array((time))
                 shifted_frame[0,1] = np.array((self.mask[index]))
-                time_frames.append(time)
+                self.time_frames.append(time)
                 shifted_images_frames.append(shifted_frame)
-
-
-
-
 
             if self.test:
                 plt.figure()
                 plt.imshow(shifted_images_mean[index], origin='lower', norm=LogNorm())
                 plt.plot(self.x0, self.y0, 'o', color='black')
-        
-        
-            
-            
-        
-        
-        
         
         self.shifted_images = np.array(shifted_images_mean)
         self.shifted_frames = np.array(shifted_images_frames)
@@ -219,9 +228,82 @@ class ObservationNight(list):
             plt.close()
             
         
-
+class ObservationAnalysis(ObservationNight):
+    def __init__(self, path, gc=True, savedir=None, test=False, verbose=False):
+        """
+        get_lightcurve_star():
+        Gets flux values for reference star
+        
+        sets attributes:
+            self.flux_dir_aperture, self.flux_dir_starfinder
+            
+        """
+        super().__init__(path, gc=gc, savedir=savedir, test=test, verbose=verbose)
+        
+        #self.get_lightcurve_S65()
     
+    def get_lightcurve_star(self, which="S65"):
+        flux_aperture = []
+        flux_starfinder = []
+        
+        for obj in self.image_objects:
+            
+            obj.get_stars()
+            star = getattr(obj, which)
+            
+            mask = np.zeros((100,100))
+            mask_bkg = np.zeros((100,100))
+            
+            if star == None:
+                for f in obj.frames:
+                    flux_aperture.append(np.nan)
+                    flux_starfinder.append(np.nan)
+                pass
+            
+            else:
+                x = int(np.round(star['ycentroid']))
+                y = int(np.round(star['xcentroid']))
 
+                mask[x-3:x+4,y] = 1
+                mask[x,y-3:y+4] = 1
+                mask[x-2:x+3,y-2:y+3] = 1
+                
+                mask_bkg[x-7:x+8,y] = 1
+                mask_bkg[x,y-7:y+8] = 1
+                mask_bkg[x-6:x+7,y-4:y+5] = 1
+                mask_bkg[x-4:x+5,y-6:y+7] = 1
+                mask_bkg[x-5:x+6,y-5:y+6] = 1
+                mask_bkg[x-5:x+6,y] = 0
+                mask_bkg[x,y-5:y+6] = 0
+                mask_bkg[x-4:x+5, y-4:y+5] = 0
+                
+                for f in obj.frames:
+                    obj.get_stars()
+                    flux_starfinder.append(star['flux'])
+                    star_object = np.multiply(mask, f)
+                    background = np.multiply(mask_bkg, f) * (mask.sum()/mask_bkg.sum())
+                
+                    flux_aperture.append(star_object.sum()-background.sum())
+                
+                    if self.test:
+                        plt.figure()
+                        plt.imshow(obj.image, origin='lower', norm=LogNorm(vmax=100))
+                        plt.imshow(star_object, origin="lower", alpha=0.1, norm=LogNorm(vmax=100))
+                        plt.figure()
+                        plt.imshow(obj.image, origin='lower', norm=LogNorm(vmax=100))
+                        plt.imshow(np.multiply(mask_bkg, obj.image), origin="lower", alpha=0.1, norm=LogNorm(vmax=100))
+                        plt.show()
+
+        self.flux_dir_starfinder = dict({which + "_flux": flux_starfinder})
+        self.flux_dir_aperture = dict({which +"_flux_aperture": flux_aperture})
+
+        
+    def get_Sgr(self, distance_S30=(,)):
+        
+                
+                
+                
+    
 
 class Image():
     def __init__(self, image, test=False, verbose=False):
@@ -791,14 +873,14 @@ class GalacticCenterImage(ScienceImage):
         except IndexError:
             self.S4 = None
             
-    def get_S30(self):
+    def get_S30(self, atol=5.):
         pos_S30 = [14.5, 69.9]                                                     
                 
         xcentroid = self.sources['xcentroid']
         ycentroid = self.sources['ycentroid']
         
-        args_x_S30 = np.where(np.isclose(xcentroid, pos_S30[0], atol=2.))[0]
-        args_y_S30 = np.where(np.isclose(ycentroid, pos_S30[1], atol=2.))[0]
+        args_x_S30 = np.where(np.isclose(xcentroid, pos_S30[0], atol=atol))[0]
+        args_y_S30 = np.where(np.isclose(ycentroid, pos_S30[1], atol=atol))[0]
         
         index_S30 = np.intersect1d(args_x_S30, args_y_S30)[0]
         
@@ -814,15 +896,15 @@ class GalacticCenterImage(ScienceImage):
             plt.ylim(0,100)
             plt.show()  
 
-    def get_S65(self):
+    def get_S65(self, atol=5.):
         pos_S65 = [10,26.7]                                                         #wrong name for star
         
         xcentroid = self.sources['xcentroid']
         ycentroid = self.sources['ycentroid']
         flux = self.sources['flux']
         
-        args_x_S65 = np.where(np.isclose(xcentroid, pos_S65[0], atol=2.))[0]
-        args_y_S65 = np.where(np.isclose(ycentroid, pos_S65[1], atol=2.))[0]
+        args_x_S65 = np.where(np.isclose(xcentroid, pos_S65[0], atol=atol))[0]
+        args_y_S65 = np.where(np.isclose(ycentroid, pos_S65[1], atol=atol))[0]
         
         index_S65 = np.intersect1d(args_x_S65, args_y_S65)[0]
         
@@ -838,15 +920,15 @@ class GalacticCenterImage(ScienceImage):
             plt.ylim(0,100)
             plt.show()
         
-    def get_S2(self):
+    def get_S2(self, atol=5.):
         pos_S2 = [49,54.4]
         
         xcentroid = self.sources['xcentroid']
         ycentroid = self.sources['ycentroid']
         flux = self.sources['flux']
         
-        args_x_S2 = np.where(np.isclose(xcentroid, pos_S2[0], atol=2.))[0]
-        args_y_S2 = np.where(np.isclose(ycentroid, pos_S2[1], atol=2.))[0]
+        args_x_S2 = np.where(np.isclose(xcentroid, pos_S2[0], atol=atol))[0]
+        args_y_S2 = np.where(np.isclose(ycentroid, pos_S2[1], atol=atol))[0]
         
         index_S2 = np.intersect1d(args_x_S2, args_y_S2)[0]
         
@@ -862,15 +944,15 @@ class GalacticCenterImage(ScienceImage):
             plt.ylim(0,100)
             plt.show()
         
-    def get_S10(self):
+    def get_S10(self, atol=5.):
         pos_S10 = [48,31.3]
         
         xcentroid = self.sources['xcentroid']
         ycentroid = self.sources['ycentroid']
         flux = self.sources['flux']
         
-        args_x_S10 = np.where(np.isclose(xcentroid, pos_S10[0], atol=2.))[0]
-        args_y_S10 = np.where(np.isclose(ycentroid, pos_S10[1], atol=2.))[0]
+        args_x_S10 = np.where(np.isclose(xcentroid, pos_S10[0], atol=atol))[0]
+        args_y_S10 = np.where(np.isclose(ycentroid, pos_S10[1], atol=atol))[0]
         
         index_S10 = np.intersect1d(args_x_S10, args_y_S10)[0]
         
@@ -886,15 +968,15 @@ class GalacticCenterImage(ScienceImage):
             plt.ylim(0,100)
             plt.show()
         
-    def get_S4(self):
+    def get_S4(self, atol=5.):
         pos_S4 = [66,56.5]
         
         xcentroid = self.sources['xcentroid']
         ycentroid = self.sources['ycentroid']
         flux = self.sources['flux']
         
-        args_x_S4 = np.where(np.isclose(xcentroid, pos_S4[0], atol=2.))[0]
-        args_y_S4 = np.where(np.isclose(ycentroid, pos_S4[1], atol=2.))[0]
+        args_x_S4 = np.where(np.isclose(xcentroid, pos_S4[0], atol=atol))[0]
+        args_y_S4 = np.where(np.isclose(ycentroid, pos_S4[1], atol=atol))[0]
         
         index_S4 = np.intersect1d(args_x_S4, args_y_S4)[0]
         

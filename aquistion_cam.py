@@ -17,6 +17,8 @@ from photutils.centroids import centroid_2dg
 from matplotlib.colors import LogNorm
 
 
+PIXEL_SCALE                      = 17.89 #mas/px Anugu+2018 
+
 
 #test
 
@@ -27,7 +29,7 @@ def opener(path):
     
     files                       = []
     file_names                  = []
-    for fi in np.sort(glob(path + "GRAVI.*fits"))[:3]:
+    for fi in np.sort(glob(path + "GRAVI.*fits"))[-4:]:
         if "aqu" not in fi and fi != "/media/gfolchi/sefe/GRAVITY/2019-07-16/GRAVI.2019-07-18T02:03:32.407.fits":
             f0                      = fits.open(fi) 
             file_names.append(fi)
@@ -231,11 +233,19 @@ class ObservationNight(list):
 class ObservationAnalysis(ObservationNight):
     def __init__(self, path, gc=True, savedir=None, test=False, verbose=False):
         """
-        get_lightcurve_star():
+        get_lightcurve_star(which):
         Gets flux values for reference star
         
         sets attributes:
             self.flux_dir_aperture, self.flux_dir_starfinder
+            
+            
+        compute_distance_star(which):
+        Returns distance in pixels of star from SgrA*
+        
+        
+        get_Sgr(ref):
+        
             
         """
         super().__init__(path, gc=gc, savedir=savedir, test=test, verbose=verbose)
@@ -247,7 +257,6 @@ class ObservationAnalysis(ObservationNight):
         flux_starfinder = []
         
         for obj in self.image_objects:
-            
             obj.get_stars()
             star = getattr(obj, which)
             
@@ -296,9 +305,86 @@ class ObservationAnalysis(ObservationNight):
 
         self.flux_dir_starfinder = dict({which + "_flux": flux_starfinder})
         self.flux_dir_aperture = dict({which +"_flux_aperture": flux_aperture})
-
         
-    def get_Sgr(self, distance_S30=(,)):
+    def compute_distance_star(self, which="S30"):        
+        """
+        returns the position which in pixel for a given time
+        """       
+        x = -556.9 + 1.2*(2004.38 - 2019.54)                #[mas] Gillessen March 2017, Time delta has to be negative
+        y = 393.9 + 3.39*(2004.38 - 2019.54)
+        
+        x_pix = x / PIXEL_SCALE                             #position [px]
+        y_pix = y / PIXEL_SCALE
+        return x_pix, y_pix
+    
+    def get_Sgr(self, ref='S30'):
+        flux_Sgr = []
+        distance_s30 = self.compute_distance_star(which=ref)
+        
+        print(distance_s30)
+
+        for obj in self.image_objects:
+            obj.get_stars()
+            star = getattr(obj, ref)
+            
+            mask = np.zeros((100,100))
+            mask_bkg = np.zeros((100,100))
+            
+            if star == None:
+                for f in obj.frames:
+                    flux_Sgr.append(np.nan)
+                pass
+            
+            else:
+                x_S30 = star['xcentroid']
+                y_S30 = star['ycentroid']
+                
+                x_Sgr = x_S30 - distance_s30[0]
+                y_Sgr = y_S30 - distance_s30[1]
+    
+                x = int(np.round(y_Sgr))
+                y = int(np.round(x_Sgr))
+                
+                mask[x-2:x+3,y] = 1
+                mask[x,y-2:y+3] = 1
+                mask[x-1:x+2,y-1:y+2] = 1
+                check = np.multiply(mask, obj.image)
+                
+                mask_bkg[x-10:x+10,y-30:y-20] = 1
+                
+                background = np.multiply(mask_bkg, obj.image) * (mask.sum()/mask_bkg.sum())
+                
+                plt.figure()
+                #plt.plot(x_S30, y_S30,"o", zorder=20)
+                plt.plot(x_Sgr, y_Sgr, "o", zorder=20)
+                plt.imshow(obj.image, origin='lower', norm=LogNorm(vmax=100))
+                plt.imshow(check, origin="lower", alpha=0.5, norm=LogNorm(vmax=100))
+                #plt.figure()
+                #plt.imshow(obj.image, origin='lower', norm=LogNorm(vmax=100))
+                #plt.imshow(np.multiply(mask_bkg, obj.image), origin="lower", alpha=0.5, norm=LogNorm(vmax=100))
+                plt.show()
+                
+                for f in obj.frames:
+                    obj.get_stars()
+                    star_object = np.multiply(mask, f)
+                    background = np.multiply(mask_bkg, f) * (mask.sum()/mask_bkg.sum())
+                
+                    flux_Sgr.append(star_object.sum()-background.sum())
+                
+                    if self.test:
+                        plt.figure()
+                        plt.imshow(obj.image, origin='lower', norm=LogNorm(vmax=100))
+                        plt.imshow(star_object, origin="lower", alpha=0.1, norm=LogNorm(vmax=100))
+                        plt.figure()
+                        plt.imshow(obj.image, origin='lower', norm=LogNorm(vmax=100))
+                        plt.imshow(np.multiply(mask_bkg, obj.image), origin="lower", alpha=0.1, norm=LogNorm(vmax=100))
+                        plt.show()
+
+        self.flux_dir_Sgr = dict({"SgrA*_flux": flux_Sgr})
+        if self.test:
+            print("Position S30: ", x_S30, y_S30)
+            print("Position SgrA*: ", x_Sgr, y_Sgr)
+
         
                 
                 

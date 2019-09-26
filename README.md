@@ -3,6 +3,7 @@
 The aquisition_cam.py is a python programm to reduce and analyze astronomic data.
 
 Here is an example on how to call it in an ipython3 shell. This code only works with Python3.
+
 ![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/call_aquisitioncam.png)
 
 First, import all the classes and functions and then give the path where the data is stored.
@@ -15,22 +16,37 @@ The ObservationNight reduces the images in the given path, determines the offset
 Then it alings all the images regarding to this offset and stacks them into a cube. There is one cube for the 5min exposure images and another one for the frames.
 
 Here is an example of calling the class.
+
 ![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/call_obs.png)
 
 
-The functions that are executed when calling ObservationNight are:__
+The functions that are executed when calling ObservationNight are:   
 **get_reduction()**: reduces the images  
 **get_reference_frame()**: determines offset  
 **get_alignment()**: alings the images and saves them into cubes  
 
 Another function is the **save()**-function. IT saves the raw data cube, the shifted images cube and the shifted frames cube as fits files. The files are saved into the path-directory unless another save directory is given.
+
 ![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/obs_savedir.png)
 
 
-
 ## ObservationAnalysis 
-Call it with: o = ObservationAnalysis(path)
-Determines the flux for a reference star (kwarg: which)
+The ObservationAnalysis class inherits from the ObservationNight class, so that all the function from ObservationNight can also be called in ObservationAnalysis. Call the class like this:
+
+![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/call_oba.png)
+
+This class plots the lightcurve of Sgr A* in flux relative to the flux of a reference star when called. The reference star can be either S30, S65 or S10. This star is also used to calculate the position of Sgr A*. Change it with
+
+![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/oba_which.png)
+
+Here is an example for the lightcurve.
+
+![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/lightcurve_easter.png)
+
+
+The functions that are executed when calling ObservationAnalysis are:   
+**get_lightcurve_star(which)**: gets flux for star 'which'  
+**get_lightcurve_Sgr(which)**: gets flux for Sgr A*. 
 
 
 

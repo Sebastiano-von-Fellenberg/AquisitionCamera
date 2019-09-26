@@ -371,7 +371,7 @@ class ObservationAnalysis(ObservationNight):
                     background = np.multiply(mask_bkg, f) * (mask.sum()/mask_bkg.sum())
                     flux_Sgr.append(star_object.sum()-background.sum())
                 
-                if self.test:
+                if self.test:   
                     plt.figure()
                     plt.plot(x_star, y_star,"o", zorder=20)
                     plt.plot(x_Sgr, y_Sgr, "o", zorder=20)
@@ -386,12 +386,11 @@ class ObservationAnalysis(ObservationNight):
              
         self.flux_aperture["SgrA*_flux"] = np.array(flux_Sgr)
         
-        if self.test:
-            plt.plot(self.time_frames, self.flux_aperture["SgrA*_flux"]/self.flux_aperture[which +"_flux"], '.')
-            plt.ylabel('Flux relative to S30')
-            plt.xlabel('Time')
-            plt.show()
-       
+        plt.plot(self.time_frames, self.flux_aperture["SgrA*_flux"]/self.flux_aperture[which +"_flux"], '.')
+        plt.ylabel('Flux relative to '+which)
+        plt.xlabel('Time')
+        plt.show()
+    
 
         
 
@@ -1058,7 +1057,7 @@ class GalacticCenterImage(ScienceImage):
             phi = np.radians(phi)
             return np.array([[np.cos(phi), -np.sin(phi)],[np.sin(phi), np.cos(phi)]])
         
-        x_S35 = (546.2 + 1.82*(time-2004.38))/PIXEL_SCALE
+        x_S35 = (546.2 + 1.82*(time-2004.38))/PIXEL_SCALE               #[mas] Gillessen March 2017
         y_S35 = (-430.1 + 3.06*(time-2004.38))/PIXEL_SCALE
         a = np.dot(matrix(9),np.array([x_S35, y_S35]))
         x_S35_pix, y_S35_pix = a[0], a[1]

@@ -1,22 +1,45 @@
 # Aquistion Camera
 
+The aquisition_cam.py is a python programm to reduce and analyze astronomic data.
 
+Here is an example on how to call it in an ipython3 shell. This code only works with Python3.
+![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/call_aquisitioncam.png)
 
+First, import all the classes and functions and then give the path where the data is stored.
+The **opener()**-function opens all GRAVI.*fits files where S2 is in the science object and that are not sky images. It saves the aquisition image data in i and the headers in h. It prints out each individual path.
+
+Now, the different classes can be called.
 
 ## ObservationNight
-Call it with: o = ObservationNight(path).
-When called, the class will reduce the images in the given path, determine the offset of star S65 in each image and create a list with this offset in pixels.
-Then it alings all the images regarding ton this offset and stacks them into a cube. There is one cube for the 5min exposure images and another one for the frames.
+The ObservationNight reduces the images in the given path, determines the offset of star S65 in each image and creates a list with this offset in pixels, when called.
+Then it alings all the images regarding to this offset and stacks them into a cube. There is one cube for the 5min exposure images and another one for the frames.
 
-Functions:
-**get_reduction()**: reduces the images
-**get_reference_frame()**: determines offset
-**get_alignment()**: alings the images and saves them into cubes
-**save()**: saves the raw cube, the shifted images cube and the shifted frames cube as fits file. Does not automatically get called when calling the class. Will save the cubes in path if no other save directory (savedir) is given.
+Here is an example of calling the class.
+![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/call_obs.png)
+
+
+The functions that are executed when calling ObservationNight are:__
+**get_reduction()**: reduces the images  
+**get_reference_frame()**: determines offset  
+**get_alignment()**: alings the images and saves them into cubes  
+
+Another function is the **save()**-function. IT saves the raw data cube, the shifted images cube and the shifted frames cube as fits files. The files are saved into the path-directory unless another save directory is given.
+![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/obs_savedir.png)
+
+
 
 ## ObservationAnalysis 
 Call it with: o = ObservationAnalysis(path)
 Determines the flux for a reference star (kwarg: which)
+
+
+
+
+
+
+
+
+
 
 
 ![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/example_found_stars_names.png)

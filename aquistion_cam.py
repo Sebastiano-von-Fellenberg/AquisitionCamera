@@ -146,6 +146,7 @@ class ObservationNight(list):
         gc.collect()
     
     def save(self, overwrite=False):
+        print("create an a fits extentation and an asci table.")
         for io in self.image_objects:
             io.save_fits(self.savedir, overwrite=overwrite)
 
@@ -179,6 +180,9 @@ class ObservationNight(list):
         return np.array(shifted_cube)
     
     def get_reference_frame(self):
+        """
+        calculates displacement of S65 in images
+        """
         self.position_S65 = []
         self.shifted_list = []
         self.mask_S65 = []
@@ -205,6 +209,9 @@ class ObservationNight(list):
                 self.mask_S30.append(True)
         
     def get_alignment(self):
+        """
+        algins all images, so that sources are on same spot
+        """
         shifted_images_mean = []
         shifted_images_frames = []
         self.time_images = []
@@ -238,7 +245,6 @@ class ObservationNight(list):
         if self.test:
             plt.show()
             plt.close()
-
         
 class ObservationAnalysis(ObservationNight):
     def __init__(self, path, gc=True, savedir=None, test=False, verbose=False):
@@ -268,6 +274,9 @@ class ObservationAnalysis(ObservationNight):
         self.get_lightcurve_Sgr()
     
     def get_lightcurve_star(self, which='S30'):
+        """
+        gets flux values for which
+        """
         flux_aperture = []
         flux_starfinder = []
         
@@ -324,7 +333,10 @@ class ObservationAnalysis(ObservationNight):
         self.flux_starfinder[which + "_flux"] = np.array(flux_starfinder)
         self.flux_aperture[which +"_flux"] = np.array(flux_aperture)
         
-    def get_lightcurve_Sgr(self, which='S10'):
+    def get_lightcurve_Sgr(self, which='S30'):
+        """
+        gets flux values for SgrA*
+        """
         flux_Sgr = []
         mask_bkg = np.zeros((100,100))
         
@@ -390,15 +402,6 @@ class ObservationAnalysis(ObservationNight):
         plt.ylabel('Flux relative to '+which)
         plt.xlabel('Time')
         plt.show()
-    
-
-        
-
-        
-                
-                
-                
-    
 
 class Image():
     def __init__(self, image, test=False, verbose=False):
@@ -465,7 +468,7 @@ class AquisitionImage(Image):
         gets the bad pixel mask stored in the module
         
         self.load_dark():
-        loads dark and subtracts it from image
+        loads dark image
         sets attributes:
             self.dark
         
@@ -594,6 +597,9 @@ class AquisitionImage(Image):
         
     
     def load_dark(self):
+        """
+        loads dark image
+        """
         dark                    = fits.getdata("ACQ_dark07_20171229_DIT.fits")
         dark                    = np.nanmean(dark,0)
         
@@ -641,13 +647,13 @@ class AquisitionImage(Image):
         if self.test:
             fig, axes = plt.subplots(1,3)
             axes[0].imshow(np.nanmean(fixed_image, axis=0), origin='lower', norm=LogNorm(vmin=10, vmax=100))
-            #axes[0].title.set_text("image corrected - dark")  
+            axes[0].title.set_text("image corrected - dark")  
             
             axes[1].imshow(np.nanmean(image_dark, axis=0), origin='lower', norm=LogNorm(vmin=10, vmax=300))
-            #axes[1].title.set_text("image uncorrected - dark")  
+            axes[1].title.set_text("image uncorrected - dark")  
             
             axes[2].imshow(np.nanmean(image, axis=0), origin='lower', norm=LogNorm(vmin=10, vmax=300))
-            #axes[0].title.set_text("image uncorrected")  
+            axes[2].title.set_text("image uncorrected")  
 
             plt.show()
             
@@ -655,7 +661,7 @@ class AquisitionImage(Image):
             fig, axes               = plt.subplots(1,2, figsize=(16,10))
             axes[0].imshow(np.nanmedian(self.image, axis=0), origin="lower", norm=LogNorm())
             axes[1].imshow(np.nanmedian(fixed_image, axis=0), origin="lower", norm=LogNorm())
-            plt.show()
+            #plt.show()
             
         del(image, mask, kernel, fixed_image)
         gc.collect()
@@ -684,7 +690,7 @@ class AquisitionImage(Image):
 
     def get_time(self):
         time                    = np.cumsum(np.repeat(self.exptime/self.ndit, self.ndit))
-        
+        print("Use time from the P2VM reduced files, there is a aquistion table with timestamps...")
         if self.test:
             print(time)
             print(self.exptime)
@@ -776,6 +782,9 @@ class ScienceImage(AquisitionImage):
         self.sub_images         = np.array(image)
     
     def get_sky_subtraction(self, sigma=None, box_size=None, filter_size=None):
+        """
+        subtracts background from image
+        """
         if sigma is None:
             sigma               = self.sigma
         if box_size is None:
@@ -808,7 +817,7 @@ class ScienceImage(AquisitionImage):
             axes[0].imshow(self.image, origin='lower', norm=LogNorm(vmax=300))
             axes[0].title.set_text("image - background")  
             
-            axes[1].imshow(self.image, origin='lower', norm=LogNorm(vmax=300))
+            axes[1].imshow(image, origin='lower', norm=LogNorm(vmax=300))
             axes[1].title.set_text("image")            
             
             axes[2].imshow(bkg.background, origin='lower', norm=LogNorm(vmax=300))
@@ -1035,12 +1044,18 @@ class GalacticCenterImage(ScienceImage):
             return x_S10_pix, y_S10_pix   
     
     def get_position_Sgr(self, which='S30'):
+        """
+        returns posisition of SgrA* 
+        """
         x_star, y_star = self.S30['xcentroid'], self.S30['ycentroid'] 
         distance = self.compute_distance_star(which=which)
         position_Sgr = (x_star - distance[0], y_star - distance[1])
         return position_Sgr
         
     def get_star_names(self, atol=3.):
+        """
+        detects stars and adds name to self.sources
+        """
         stars = dict()
         time = np.mean(self.timeframes)
         position_Sgr = self.get_position_Sgr()
@@ -1050,7 +1065,7 @@ class GalacticCenterImage(ScienceImage):
         try:
             self.sources['star']
         except KeyError:
-            a = Column(['     ' for i in range(len(xcentroid))], name='star')
+            a = Column([None for i in range(len(xcentroid))], name='star')
             self.sources.add_column(a, index=1)
         
         def matrix(phi):
@@ -1164,16 +1179,21 @@ class GalacticCenterImage(ScienceImage):
                 pass
             self.sources[index_star]['star'] = j
             #print(self.sources[index_star])
-
+        
         if self.test:
             plt.imshow(self.image, origin='lower', norm=LogNorm(vmax=100))
-            for j in stars:
-                plt.plot(stars[j][0], stars[j][1], 'o')
+            plt.plot(self.sources['xcentroid'], self.sources['ycentroid'], 'o', color='blue')
+            plt.plot(self.sources["xcentroid"][self.sources["star"]!=None], self.sources["ycentroid"][self.sources["star"]!=None], 'o', color='orange')
+            for name in self.sources['star'][self.sources['star']!=None]:
+                x = self.sources["xcentroid"][self.sources["star"] ==  name]
+                y = self.sources["ycentroid"][self.sources["star"] ==  name]
+                plt.annotate(name, xy=(x,y))
             plt.show()
-    
-        
-    
+            
     def get_S30(self, atol=5.):
+        """
+        gets information of S30 from self.sources
+        """
         pos_S30 = [14.5, 69.9]                                                     
                 
         xcentroid = self.sources['xcentroid']
@@ -1197,6 +1217,9 @@ class GalacticCenterImage(ScienceImage):
             plt.show()  
 
     def get_S65(self, atol=5.):
+        """
+        gets information of S65 from self.sources
+        """
         pos_S65 = [10,26.7]                                                    
         
         xcentroid = self.sources['xcentroid']
@@ -1220,6 +1243,9 @@ class GalacticCenterImage(ScienceImage):
             plt.show()
         
     def get_S2(self, atol=5.):
+        """
+        gets information of S2 from self.sources
+        """
         pos_S2 = [49,54.4]
         
         xcentroid = self.sources['xcentroid']
@@ -1243,6 +1269,9 @@ class GalacticCenterImage(ScienceImage):
             plt.show()
         
     def get_S10(self, atol=5.):
+        """
+        gets information of S10 from self.sources
+        """
         pos_S10 = [51,31]
         
         xcentroid = self.sources['xcentroid']
@@ -1266,6 +1295,9 @@ class GalacticCenterImage(ScienceImage):
             plt.show()
         
     def get_S4(self, atol=5.):
+        """
+        gets information of S4 from self.sources
+        """
         pos_S4 = [66,56.5]
         
         xcentroid = self.sources['xcentroid']

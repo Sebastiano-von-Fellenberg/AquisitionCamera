@@ -16,4 +16,7 @@ Functions:
 
 ## ObservationAnalysis 
 Call it with: o = ObservationAnalysis(path)
-Determines the flux for a reference star (kwarg: which) 
+Determines the flux for a reference star (kwarg: which)
+
+
+![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/example_found_stars_names.png)

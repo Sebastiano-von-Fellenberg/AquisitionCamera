@@ -27,34 +27,21 @@ def opener(path):
     """
     helper files that opens all files with GRAVI.*fits that are not skys or S2 is not in the science object
     """
+
+    headers                     = []
+    aquistion_images            = []
+    names                       = []
     
-    files                       = []
-    file_names                  = []
     #print(sorted(glob(path + "GRAVI.*fits"))[:9])
     for fi in sorted(glob(path + "GRAVI.*fits"))[3:11]:
         #print(fi)
         if "aqu" not in fi and fi != path + 'GRAVI.2019-04-22T09:23:13.816.fits' and fi != path + 'GRAVI.2019-04-22T09:29:13.832.fits':
-        #if "aqu" not in fi and fi != path + "GRAVI.2019-07-18T02:03:32.407.fits":  ##for path="/data/2019-07-16/data/"
-            print(fi)
-            f0                      = fits.open(fi) 
-            file_names.append(fi)
-            files.append(f0)
-            
-    headers                     = []
-    aquistion_images            = []
-    names                       = []
-
-    for fi, finame in zip(files, file_names):
-        #print(finame)
-        h0                      = fi[0].header 
-        i0                      = fi[4].data 
-        n0                      = fi[0].header["ARCFILE"] 
-        #print(h0["ESO INS SOBJ NAME"], h0["ESO DPR TYPE"])
-        if "S2" in h0["ESO INS SOBJ NAME"] and "SKY" not in h0["ESO DPR TYPE"]:
-            headers.append(h0)
-            aquistion_images.append(i0)
-            names.append(n0)
-        
+            h0                      = fits.open(fi)[0].header 
+            if "S2" in h0["ESO INS SOBJ NAME"] and "SKY" not in h0["ESO DPR TYPE"]:
+                i0                      = fits.open(fi)[4].data 
+                print(h0["ARCFILE"])
+                headers.append(h0)
+                aquistion_images.append(i0)
     return aquistion_images, headers
 
 

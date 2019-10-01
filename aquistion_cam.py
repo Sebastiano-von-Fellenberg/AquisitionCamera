@@ -8,7 +8,8 @@ import pandas as pd
 
 from astropy.stats import SigmaClip
 from astropy.time import Time as AstropyTime
-from astropy.table import Column
+from astropy.table import Column, Table
+from astropy.io import ascii
 from photutils import Background2D, MedianBackground
 
 from scipy.signal import correlate2d, convolve2d
@@ -33,12 +34,12 @@ def opener(path):
     names                       = []
     
     #print(sorted(glob(path + "GRAVI.*fits"))[:9])
-    for fi in sorted(glob(path + "GRAVI.*fits"))[3:11]:
+    for fi in sorted(glob(path + "GRAVI.*_dualscip2vmred.fits")):
         #print(fi)
         if "aqu" not in fi and fi != path + 'GRAVI.2019-04-22T09:23:13.816.fits' and fi != path + 'GRAVI.2019-04-22T09:29:13.832.fits':
             h0                      = fits.open(fi)[0].header 
-            if "S2" in h0["ESO INS SOBJ NAME"] and "SKY" not in h0["ESO DPR TYPE"]:
-                i0                      = fits.open(fi)[4].data 
+            if "S2" in h0["ESO INS SOBJ NAME"] and "SKY" not in h0["HIERARCH ESO OBS NAME"]:
+                i0                      = fits.open(fi)[17].data 
                 print(h0["ARCFILE"])
                 headers.append(h0)
                 aquistion_images.append(i0)
@@ -132,20 +133,25 @@ class ObservationNight(list):
         del(o)
         gc.collect()
     
-    def save(self, overwrite=False):
+    def save(self, overwrite=False, save_dir=None):
         print("create an a fits extentation and an asci table.")
+        if save_dir is None:
+            save_dir            = self.save_dir
         for io in self.image_objects:
-            io.save_fits(self.savedir, overwrite=overwrite)
+            io.save_fits(save_dir, overwrite=overwrite)
 
         nightcube               = []
         for io in self.image_objects:
             nightcube.append(io.image)
         self.nightcube          = np.array(nightcube)
         
-        fits.writeto(self.savedir + "aquistion_raw_cube.fits", np.array(nightcube), overwrite=overwrite)
-        fits.writeto(self.savedir + "aquistion_shifted_cube.fits", np.array(self.shifted_images), overwrite=overwrite)
-        fits.writeto(self.savedir + "aquistion_shifted_frames_cube.fits", np.array(self.shifted_frames), overwrite=overwrite)
-
+        fits.writeto(save_dir + "aquistion_raw_cube.fits", np.array(nightcube), overwrite=overwrite)
+        fits.writeto(save_dir + "aquistion_shifted_cube.fits", np.array(self.shifted_images), overwrite=overwrite)
+        fits.writeto(save_dir + "aquistion_shifted_frames_cube.fits", np.array(self.shifted_frames), overwrite=overwrite)
+        
+        flux_table              = Table(self.flux_aperture)
+        ascii.write(flux_table, save_dir + "lightcurve_aperture.csv")
+        
     def aligncube(self, x0, y0, search_box=5):
         positions = []
         shifted_cube =[]
@@ -175,14 +181,15 @@ class ObservationNight(list):
         self.mask_S65 = []
         self.mask_S30 = []
         for obj in self.image_objects:
-            obj.get_stars()
+            #print(obj.S65)
+            #obj.get_stars()
             if obj.S65 == None:
                 self.position_S65.append((0., 0.))
                 self.mask_S65.append(False)
             else:
-                self.position_S65.append((obj.S65[1], obj.S65[2]))
+                self.position_S65.append((obj.S65["xcentroid"], obj.S65["ycentroid"]))
                 self.mask_S65.append(True)
-                
+            
             self.shifted_list.append((self.x0 - self.position_S65[-1][0], self.y0 - self.position_S65[-1][1]))
             
             if self.test:
@@ -206,7 +213,7 @@ class ObservationNight(list):
         
         for index, image_object in enumerate(self.image_objects):
             shifted_image = shift(image_object.image, (self.shifted_list[index][1], self.shifted_list[index][0]))
-            t = AstropyTime(image_object.date + np.timedelta64(np.round(image_object.ndit/2*image_object.dit*1000).astype(int), "ms")).decimalyear
+            t = AstropyTime(str(image_object.date + np.timedelta64(int(np.round(image_object.ndit/2*image_object.dit*1000)), "ms"))).decimalyear
             shifted_image[0,0] = np.array((t))
             shifted_image[0,1] = np.array((self.mask_S65[index]))
             shifted_images_mean.append(shifted_image)
@@ -214,7 +221,7 @@ class ObservationNight(list):
 
             for f, f_t in zip(image_object.frames, image_object.frame_times):
                 shifted_frame = shift(f, (self.shifted_list[index][1], self.shifted_list[index][0]))
-                time = AstropyTime(f_t).decimalyear
+                time = AstropyTime(str(f_t)).decimalyear
                 shifted_frame[0,0] = np.array((time))
                 shifted_frame[0,1] = np.array((self.mask_S65[index]))
                 self.time_frames.append(time)
@@ -258,6 +265,7 @@ class ObservationAnalysis(ObservationNight):
         self.flux_aperture = dict()
         self.flux_starfinder = dict()
         self.get_lightcurve_star()
+        self.get_lightcurve_star(which="S65")
         self.get_lightcurve_Sgr()
     
     def get_lightcurve_star(self, which='S30'):
@@ -266,12 +274,12 @@ class ObservationAnalysis(ObservationNight):
         """
         flux_aperture = []
         flux_starfinder = []
-        
+        times           = []
         mask = np.zeros((100,100))
         mask_bkg = np.zeros((100,100))
         
         for obj in self.image_objects:
-            obj.get_stars()
+            #obj.get_stars()
             star = getattr(obj, which)
             
             mask = np.zeros((100,100))
@@ -300,14 +308,14 @@ class ObservationAnalysis(ObservationNight):
                 mask_bkg[x,y-5:y+6] = 0
                 mask_bkg[x-4:x+5, y-4:y+5] = 0
                 
-                for f in obj.frames:
-                    obj.get_stars()
+                for f, t in zip(obj.frames, obj.timeframes):
+                    #obj.get_stars()
                     flux_starfinder.append(star['flux'])
                     star_object = np.multiply(mask, f)
                     background = np.multiply(mask_bkg, f) * (mask.sum()/mask_bkg.sum())
                 
                     flux_aperture.append(star_object.sum()-background.sum())
-                
+                    times.append(t)
                     if self.test:
                         plt.figure()
                         plt.imshow(obj.image, origin='lower', norm=LogNorm(vmax=100))
@@ -318,8 +326,9 @@ class ObservationAnalysis(ObservationNight):
                         plt.show()
 
         self.flux_starfinder[which + "_flux"] = np.array(flux_starfinder)
+        self.flux_starfinder["time"]      = np.array(times)
         self.flux_aperture[which +"_flux"] = np.array(flux_aperture)
-        
+        self.flux_aperture["time"]      = np.array(times)
     def get_lightcurve_Sgr(self, which='S30'):
         """
         gets flux values for SgrA*
@@ -327,9 +336,8 @@ class ObservationAnalysis(ObservationNight):
         flux_Sgr = []
         mask_bkg = np.zeros((100,100))
         
-        i, h = opener("/data/Gravity_2019/EasterFlare/raw/")
-        o = GalacticCenterImage(i[0], h[0])
-        distance_star = o.compute_distance_star(which=which)
+
+        
 
         def mask_function(x,y):
             mask = np.zeros((100,100))
@@ -339,9 +347,9 @@ class ObservationAnalysis(ObservationNight):
             return mask 
         
         for obj in self.image_objects:
-            obj.get_stars()
+            #obj.get_stars()
             star = getattr(obj, which)
-            
+            distance_star = obj.compute_distance_star(which=which)
             if star == None:
                 for f in obj.frames:
                     flux_Sgr.append(np.nan)
@@ -365,7 +373,7 @@ class ObservationAnalysis(ObservationNight):
                 star_mask = np.multiply(mask, obj.image)
                 
                 for f in obj.frames:
-                    obj.get_stars()
+                    #obj.get_stars()
                     star_object = np.multiply(mask, f)
                     background = np.multiply(mask_bkg, f) * (mask.sum()/mask_bkg.sum())
                     flux_Sgr.append(star_object.sum()-background.sum())
@@ -476,7 +484,7 @@ class AquisitionImage(Image):
         
         self.date               = np.datetime64(datetime.strptime(self.header["DATE-OBS"], "%Y-%m-%dT%H:%M:%S"))
         self.mjd                = self.header["MJD-OBS"]
-        self.exptime            = self.header["EXPTIME"]
+        self.exptime            = self.header["ESO DET2 SEQ1 DIT"]*self.header["ESO DET2 NDIT"]
         self.name               = self.header["ARCFILE"]
         self.ndit               = self.header["ESO DET1 NDIT"]
         self.dit                = self.header["ESO DET1 SEQ1 DIT"]
@@ -813,26 +821,31 @@ class ScienceImage(AquisitionImage):
             plt.show()
     
     def get_frames(self):
-        t0 = self.timestamps[0]
-        delta_t = self.timestamps[self.stack//2] - t0        
-        c = 0
+        t0 = np.datetime64(self.header["HIERARCH ESO PCR ACQ START"])
+        t1 = np.datetime64(self.header["HIERARCH ESO PCR ACQ END"])
+        print(t0)
+        print(t1)
+        delta_t = (t1-t0)/self.ndit*self.stack//2
+        print(delta_t)
+        c                       = 0
         frames, frame_times, f0 = [], [], []
-        
+        c00                     = 0
         for index, im in enumerate(self.cube):
-            c +=1
+            c                   +=1
             if c <= self.stack:
                 f0.append(im)
             else:
                 frames.append(np.median(f0, axis=0))
-                frame_times.append(self.timestamps[index-self.stack] + delta_t)
-                c = 0
-                f0 = []
+                frame_times.append(t0 + delta_t*2*c00+ delta_t)
+                c               = 0
+                f0              = []
+                c00             +=1
   
         self.frames             = np.array(frames)
         self.frame_times        = np.array(frame_times)
     
         for f_t in self.frame_times:
-            t = AstropyTime(f_t).decimalyear
+            t = AstropyTime(str(f_t)).decimalyear
             self.timeframes.append(t)
         
         del(frames, frame_times)
@@ -856,16 +869,16 @@ class ScienceImage(AquisitionImage):
         cube                    = fits.PrimaryHDU(self.frames, header=self.header)
         raw                     = fits.ImageHDU(self.raw_image)
         image                   = fits.ImageHDU(self.image)
-        
         try:
-            psf                 = fits.ImageHDU(self.psf)
-            hdul                = fits.HDUList([cube, raw, image, psf])
+
+            ascii.write(self.sources, store_dir + self.name[:-5] + "_source_table.csv", overwrite=overwrite)
+            
         except AttributeError:
-            print("no psf found")
+            print("no sources...")
             hdul                = fits.HDUList([cube, raw, image])
             
         
-        hdul                    = fits.HDUList([cube, raw, image, psf])
+        hdul                    = fits.HDUList([cube, raw, image])
         hdul.writeto(name, overwrite=overwrite)
         
 class GalacticCenterImage(ScienceImage):
@@ -1034,7 +1047,11 @@ class GalacticCenterImage(ScienceImage):
         """
         returns posisition of SgrA* 
         """
-        x_star, y_star = self.S30['xcentroid'], self.S30['ycentroid'] 
+        try:
+            x_star, y_star = self.S30['xcentroid'], self.S30['ycentroid'] 
+        except TypeError:
+            x_star, y_star = 14.5, 69.9
+            print("warning, s30 not found using guesstimate.")
         distance = self.compute_distance_star(which=which)
         position_Sgr = (x_star - distance[0], y_star - distance[1])
         return position_Sgr
@@ -1162,9 +1179,13 @@ class GalacticCenterImage(ScienceImage):
             args_y_star = np.where(np.isclose(ycentroid, stars[j][1], atol=atol))[0]
             try:
                 index_star = np.intersect1d(args_x_star, args_y_star)[0]
+                self.sources[index_star]['star'] = j
+                #print(self.sources["star"])
+                #print("found a star!")
             except IndexError:
+                #print("index error")
                 pass
-            self.sources[index_star]['star'] = j
+            
             #print(self.sources[index_star])
         
         if self.test:
@@ -1190,13 +1211,11 @@ class GalacticCenterImage(ScienceImage):
         args_y_S30 = np.where(np.isclose(ycentroid, pos_S30[1], atol=atol))[0]
         
         index_S30 = np.intersect1d(args_x_S30, args_y_S30)[0]
-        
-        x_S30 = self.sources['xcentroid'][index_S30]
-        y_S30 = self.sources['ycentroid'][index_S30]
-        
         self.S30 = self.sources[index_S30]
         
         if self.test:
+            x_S30 = self.sources['xcentroid'][index_S30]
+            y_S30 = self.sources['ycentroid'][index_S30]
             plt.imshow(self.image, norm=LogNorm(), origin='lower')
             plt.plot(x_S30, y_S30, 'o')
             plt.xlim(0,100)

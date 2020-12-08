@@ -777,7 +777,7 @@ class ScienceImage(AquisitionImage):
         self.sub_images         = np.array(image)
 
 	def get_ft_fields(self, crop_out=(50, 50)):
-        image                   = []
+        #image                   = []
         	for pos in self.pos_sc:
             	image.append(self.image[:, pos[0]-50:pos[0]+50, pos[1]-50:pos[1]+50])            
         	if self.test:

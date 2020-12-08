@@ -1,3 +1,0 @@
-example_data/aquistion_nightcube.fits filter=lfs diff=lfs merge=lfs -text
-example_data/aquistion_shifted_nightcube.fits filter=lfs diff=lfs merge=lfs -text
-example_data/GRAVI.2017-08-07T03:13:05.584_aquisition_camera_cube.fits filter=lfs diff=lfs merge=lfs -text

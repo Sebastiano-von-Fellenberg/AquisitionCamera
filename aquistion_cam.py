@@ -775,6 +775,24 @@ class ScienceImage(AquisitionImage):
         self.raw_image          = self.image.copy()
         self.image              = np.nanmedian(np.array(image), axis=(0)) ###BUG this definition is different form GalacticCenterImage, where self.image is just self.raw_image --- ###WARNING not sure if thats actually true!
         self.sub_images         = np.array(image)
+
+	def get_ft_fields(self, crop_out=(50, 50)):
+        image                   = []
+        	for pos in self.pos_sc:
+            	image.append(self.image[:, pos[0]-50:pos[0]+50, pos[1]-50:pos[1]+50])            
+        	if self.test:
+            for i in image:
+                
+                plt.figure()
+                plt.imshow(np.nanmedian(i[:, :, ::-1] , axis=0), origin="lower", norm=LogNorm() )
+                plt.plot(49,49, "o")
+            plt.figure()
+            plt.imshow(np.nanmedian(image, axis=(0,1))[:,::-1], origin="lower", norm=LogNorm())
+            plt.show()
+            
+        self.raw_image          = self.image.copy()
+        self.image              = np.nanmedian(np.array(image), axis=(0)) ###BUG this definition is different form GalacticCenterImage, where self.image is just self.raw_image --- ###WARNING not sure if thats actually true!
+        self.sub_images         = np.array(image)	
     
     def get_sky_subtraction(self, sigma=None, box_size=None, filter_size=None):
         """

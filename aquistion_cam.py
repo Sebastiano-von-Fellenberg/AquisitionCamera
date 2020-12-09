@@ -33,9 +33,7 @@ def opener(path):
     aquistion_images            = []
     names                       = []
     
-    #print(sorted(glob(path + "GRAVI.*fits"))[:9])
     for fi in sorted(glob(path + "GRAVI.*_dualscip2vmred.fits")):
-        #print(fi)
         if "aqu" not in fi and fi != path + 'GRAVI.2019-04-22T09:23:13.816.fits' and fi != path + 'GRAVI.2019-04-22T09:29:13.832.fits':
             h0                      = fits.open(fi)[0].header 
             if "S2" in h0["ESO INS SOBJ NAME"] and "SKY" not in h0["HIERARCH ESO OBS NAME"]:
@@ -133,8 +131,8 @@ class ObservationNight(list):
         del(o)
         gc.collect()
     
-    def save(self, overwrite=False, save_dir=None):
-        print("create an a fits extentation and an asci table.")
+    def save(self, save_dir=None):
+        overwrite=True
         if save_dir is None:
             save_dir            = self.save_dir
         for io in self.image_objects:
@@ -150,7 +148,7 @@ class ObservationNight(list):
         fits.writeto(save_dir + "aquistion_shifted_frames_cube.fits", np.array(self.shifted_frames), overwrite=overwrite)
         
         flux_table              = Table(self.flux_aperture)
-        ascii.write(flux_table, save_dir + "lightcurve_aperture.csv")
+        ascii.write(flux_table, save_dir + "lightcurve_aperture.csv", overwrite=overwrite)
         
     def aligncube(self, x0, y0, search_box=5):
         positions = []
@@ -181,7 +179,6 @@ class ObservationNight(list):
         self.mask_S65 = []
         self.mask_S30 = []
         for obj in self.image_objects:
-            #print(obj.S65)
             #obj.get_stars()
             if obj.S65 == None:
                 self.position_S65.append((0., 0.))
@@ -392,11 +389,11 @@ class ObservationAnalysis(ObservationNight):
                     print("Position SgrA*: ", x_Sgr, y_Sgr)
              
         self.flux_aperture["SgrA*_flux"] = np.array(flux_Sgr)
-        
-        plt.plot(self.time_frames, self.flux_aperture["SgrA*_flux"]/self.flux_aperture[which +"_flux"], '.')
-        plt.ylabel('Flux relative to '+which)
-        plt.xlabel('Time')
-        plt.show()
+        if self.test:
+            plt.plot(self.time_frames, self.flux_aperture["SgrA*_flux"]/self.flux_aperture[which +"_flux"], '.')
+            plt.ylabel('Flux relative to '+which)
+            plt.xlabel('Time')
+            plt.show()
 
 class Image():
     def __init__(self, image, test=False, verbose=False):
@@ -685,7 +682,6 @@ class AquisitionImage(Image):
 
     def get_time(self):
         time                    = np.cumsum(np.repeat(self.exptime/self.ndit, self.ndit))
-        print("Use time from the P2VM reduced files, there is a aquistion table with timestamps...")
         if self.test:
             print(time)
             print(self.exptime)
@@ -823,10 +819,7 @@ class ScienceImage(AquisitionImage):
     def get_frames(self):
         t0 = np.datetime64(self.header["HIERARCH ESO PCR ACQ START"])
         t1 = np.datetime64(self.header["HIERARCH ESO PCR ACQ END"])
-        print(t0)
-        print(t1)
         delta_t = (t1-t0)/self.ndit*self.stack//2
-        print(delta_t)
         c                       = 0
         frames, frame_times, f0 = [], [], []
         c00                     = 0
@@ -1180,13 +1173,9 @@ class GalacticCenterImage(ScienceImage):
             try:
                 index_star = np.intersect1d(args_x_star, args_y_star)[0]
                 self.sources[index_star]['star'] = j
-                #print(self.sources["star"])
-                #print("found a star!")
             except IndexError:
-                #print("index error")
                 pass
             
-            #print(self.sources[index_star])
         
         if self.test:
             plt.imshow(self.image, origin='lower', norm=LogNorm(vmax=100))

@@ -4,7 +4,13 @@ The aquisition_cam.py is a python programm to reduce and analyze astronomic data
 
 Here is an example on how to call it in an ipython3 shell. This code only works with Python3.
 
-![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/call_aquisitioncam.png)
+```python
+import AquisitionCamera as ac
+
+# define path with all the GRAVITY raw files
+path = '/path/to/gravity/'
+i,h = ac.opener(path)
+```
 
 First, import all the classes and functions and then give the path where the data is stored.
 The **opener()**-function opens all GRAVI.*fits files where S2 is in the science object and that are not sky images. It saves the aquisition image data in i and the headers in h. It prints out each individual path.
@@ -17,8 +23,9 @@ Then it alings all the images regarding to this offset and stacks them into a cu
 
 Here is an example of calling the class.
 
-![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/call_obs.png)
-
+```python
+obs = ac.ObservationNight(path)
+```
 
 The functions that are executed when calling ObservationNight are:   
 **get_reduction()**: reduces the images  
@@ -27,21 +34,26 @@ The functions that are executed when calling ObservationNight are:
 
 Another function is the **save()**-function. IT saves the raw data cube, the shifted images cube and the shifted frames cube as fits files. The files are saved into the path-directory unless another save directory is given.
 
-![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/obs_savedir.png)
-
+```python
+obs.savedir = '/path/to/directory'
+```
 
 ## ObservationAnalysis 
 The ObservationAnalysis class inherits from the ObservationNight class, so that all the function from ObservationNight can also be called in ObservationAnalysis. Call the class like this:
 
-![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/call_oba.png)
+```python
+oba = ac.ObservationAnalysis(path)
+```
 
 This class plots the lightcurve of Sgr A* in flux relative to the flux of a reference star when called. The reference star can be either S30, S65 or S10. This star is also used to calculate the position of Sgr A*. Change it with:
 
-![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/oba_which.png)
+```python
+oba.get_lightcurve_Sgr(which='S30')
+```
 
 Here is an example for the lightcurve.
 
-![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/lightcurve_easter.png)
+![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/master/figures/lightcurve_easter.png)
 
 
 The functions that are executed when calling ObservationAnalysis are:   
@@ -57,22 +69,26 @@ The Image class is a base class for astronomy images. It just saves the data ima
 The AquisitionImage class inherits from Image. It is used for reduction by subtracting the background and interpolating the dead pixels. It also gets the position of the science and fringe tracking fiber, as well as getting the time of each exposure based on dit and ndit.  
 It can be called like this, by picking out one image and one header:   
 
-![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/call_aq.png)
+```python
+aq = ac.AquisitionImage(i[0], h[0])
+```
 
 Here is an example of the image after sky subtraction and dead pixel interpolation, of the image after sky subtraction and of the raw image.
 
-![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/aq_corrected.png)
+
+
+![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/master/figures/aq_corrected.png)
 
 
 ## ScienceImage
 The ScienceImage class inherits from AquisitionImage. It subtracts the background from the image and also determines the time for each image and each frame. It gets called like the AquisitionImage.  
 Here is an example of the fully reduced image in regard to the one with the background, and also the background itself.
 
-![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/sc_imageback.png)
+![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/master/figures/sc_imageback.png)
 
 
 ## GalacticCenterImage
 The GalacticCenterImage class inherits from ScienceImage. It has an implemented starfinder which is able to detect sources in the image and creates a table with information like the x and y position in pixels and the flux. It also gives the name for several stars. It is called like the ScienceImage.  
 Here is an example of how the star detection looks like.
 
-![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/giulia_branch/example_found_stars_names.png)
+![alt text](https://github.com/Sebastiano-von-Fellenberg/AquisitionCamera/blob/master/figures/example_found_stars_names.png)

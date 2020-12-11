@@ -13,6 +13,7 @@ from astropy.io import ascii
 from photutils import Background2D, MedianBackground
 from astropy.convolution import Gaussian2DKernel, interpolate_replace_nans
 
+from scipy import optimize
 from scipy.signal import correlate2d, convolve2d
 from scipy.ndimage import shift
 from photutils.centroids import centroid_2dg
@@ -941,6 +942,62 @@ class ScienceImage(AquisitionImage):
             hdul = fits.HDUList([cube, raw, image])
         hdul = fits.HDUList([cube, raw, image])
         hdul.writeto(name, overwrite=overwrite)
+        
+        
+    def _2Dgauss(self, xdata_tuple, amplitude, xo, yo, sigma_x, sigma_y, theta, offset):
+        (x, y) = xdata_tuple                                                        
+        xo = float(xo)                                                              
+        yo = float(yo)                                                              
+        a = (np.cos(theta)**2)/(2*sigma_x**2) + (np.sin(theta)**2)/(2*sigma_y**2)   
+        b = -(np.sin(2*theta))/(4*sigma_x**2) + (np.sin(2*theta))/(4*sigma_y**2)    
+        c = (np.sin(theta)**2)/(2*sigma_x**2) + (np.cos(theta)**2)/(2*sigma_y**2)   
+        g = offset + amplitude*np.exp( - (a*((x-xo)**2) + 2*b*(x-xo)*(y-yo)
+                                        + c*((y-yo)**2)))                                   
+        return g.ravel()
+
+        
+    def get_ft_size(self, subtel=False, plot=False):
+        """
+        Function to fit a 2d gaussian to the FT source, to estimate the psf size
+        """
+        
+        if subtel:
+            popt_res = []
+            for tel in range(4):
+                im = np.nanmedian(self.ft_sub_images[tel],0)
+                dimx, dimy = im.shape
+
+                x = np.linspace(0, dimx-1, dimx)
+                y = np.linspace(0, dimy-1, dimy)
+                x, y = np.meshgrid(x, y)
+                
+                im_f = im.reshape(dimx*dimy)
+                p0 = [np.max(im), dimx//2, dimy//2, 3, 3, 0, 0]
+                popt, pcov = optimize.curve_fit(self._2Dgauss, (x, y), im_f, p0=p0)
+                popt_res.append(popt)
+
+        im = self.ft_image
+        dimx, dimy = im.shape
+
+        x = np.linspace(0, dimx-1, dimx)
+        y = np.linspace(0, dimy-1, dimy)
+        x, y = np.meshgrid(x, y)
+        
+        im_f = im.reshape(dimx*dimy)
+        p0 = [np.max(im), dimx//2, dimy//2, 3, 3, 0, 0]
+        popt, pcov = optimize.curve_fit(self._2Dgauss, (x, y), im_f, p0=p0)
+        
+        if plot:
+            res = self._2Dgauss((x, y), *popt)
+            res = res.reshape(dimx,dimy)
+            plt.imshow(im, vmax=popt[0])
+            plt.contour(x, y, res, 8, colors='k')
+            plt.show()
+        if not subtel:
+            popt_res = popt
+        return popt_res
+        
+        
 
         
 class GalacticCenterImage(ScienceImage):

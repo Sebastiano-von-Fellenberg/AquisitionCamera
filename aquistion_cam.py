@@ -5,47 +5,55 @@ from glob import glob
 from datetime import datetime
 import gc
 import pandas as pd
-
+from pkg_resources import resource_filename
 from astropy.stats import SigmaClip
 from astropy.time import Time as AstropyTime
 from astropy.table import Column, Table
 from astropy.io import ascii
 from photutils import Background2D, MedianBackground
+from astropy.convolution import Gaussian2DKernel, interpolate_replace_nans
 
 from scipy.signal import correlate2d, convolve2d
 from scipy.ndimage import shift
 from photutils.centroids import centroid_2dg
-
 from matplotlib.colors import LogNorm
 
+from astropy.table import Table
+from astropy.nddata import NDData
+from photutils.psf import extract_stars
+from scipy.interpolate import interp2d        
 
-PIXEL_SCALE                      = 17.89 #mas/px Anugu+2018 
+
+PIXEL_SCALE = 17.89 #mas/px Anugu+2018 
 
 
 
 
-def opener(path):
+def opener(path, galcenter=True, verbose=True):
     """
     helper files that opens all files with GRAVI.*fits that are not skys or S2 is not in the science object
     """
 
-    headers                     = []
-    aquistion_images            = []
-    names                       = []
+    headers = []
+    aquistion_images = []
+    names = []
     
     for fi in sorted(glob(path + "GRAVI.*_dualscip2vmred.fits")):
         if "aqu" not in fi and fi != path + 'GRAVI.2019-04-22T09:23:13.816.fits' and fi != path + 'GRAVI.2019-04-22T09:29:13.832.fits':
-            h0                      = fits.open(fi)[0].header 
-            if "S2" in h0["ESO INS SOBJ NAME"] and "SKY" not in h0["HIERARCH ESO OBS NAME"]:
-                i0                      = fits.open(fi)[17].data 
-                print(h0["ARCFILE"])
+            h0 = fits.open(fi)[0].header 
+            if galcenter and "S2" not in h0["ESO INS SOBJ NAME"]:
+                continue
+            if "SKY" not in h0["HIERARCH ESO OBS NAME"]:
+                i0 = fits.open(fi)[17].data 
+                if verbose:
+                    print(h0["ARCFILE"])
                 headers.append(h0)
                 aquistion_images.append(i0)
     return aquistion_images, headers
 
 
 class ObservationNight(list):
-    def __init__(self, path, gc=True, savedir=None, test=False, verbose=False):
+    def __init__(self, path, galcenter=True, savedir=None, test=False, verbose=False):
         """
         Reduces all images in the path
         args:
@@ -93,17 +101,17 @@ class ObservationNight(list):
         sets attributes:
             self.shifted_images, self.shifted_frames, self.time_images, self.time_frames
         """
-        self.path               = path
-        self.gc                 = gc
-        self.test               = test
-        self.verbose            = verbose
+        self.path = path
+        self.galcenter = galcenter
+        self.test = test
+        self.verbose = verbose
         
-        self.image_objects      = None
+        self.image_objects = None
         
         if savedir is None:
-            self.savedir        = path
+            self.savedir = path
         else:
-            self.savedir        = savedir
+            self.savedir = savedir
         
         self.position_S65 = None
         self.shift_list = None
@@ -113,42 +121,46 @@ class ObservationNight(list):
         self.x0 = 10
         self.y0 = 20
         
-        self.aquistion_images, self.headers = opener(self.path)
+        self.aquistion_images, self.headers = opener(self.path, galcenter=galcenter)
         self.get_reduction()
         self.get_reference_frame()
         self.get_alignment()
 
     def get_reduction(self):
-        self.image_objects      = []
-        if self.gc:
+        self.image_objects = []
+        if self.galcenter:
             for i, h in zip(self.aquistion_images, self.headers):
-                o               = GalacticCenterImage(i, h)
+                o = GalacticCenterImage(i, h)
                 o.get_PSF()
                 self.image_objects.append(o)
+            del(o)
         else:
             for i, h in zip(self.aquistion_images, self.headers):
                 self.image_objects.append(ScienceImage(i, h))
-        del(o)
         gc.collect()
     
     def save(self, save_dir=None):
         overwrite=True
         if save_dir is None:
-            save_dir            = self.save_dir
+            save_dir = self.save_dir
         for io in self.image_objects:
             io.save_fits(save_dir, overwrite=overwrite)
 
-        nightcube               = []
+        nightcube = []
         for io in self.image_objects:
             nightcube.append(io.image)
-        self.nightcube          = np.array(nightcube)
+        self.nightcube = np.array(nightcube)
         
-        fits.writeto(save_dir + "aquistion_raw_cube.fits", np.array(nightcube), overwrite=overwrite)
-        fits.writeto(save_dir + "aquistion_shifted_cube.fits", np.array(self.shifted_images), overwrite=overwrite)
-        fits.writeto(save_dir + "aquistion_shifted_frames_cube.fits", np.array(self.shifted_frames), overwrite=overwrite)
+        fits.writeto(save_dir + "aquistion_raw_cube.fits", 
+                     np.array(nightcube), overwrite=overwrite)
+        fits.writeto(save_dir + "aquistion_shifted_cube.fits", 
+                     np.array(self.shifted_images), overwrite=overwrite)
+        fits.writeto(save_dir + "aquistion_shifted_frames_cube.fits", 
+                     np.array(self.shifted_frames), overwrite=overwrite)
         
-        flux_table              = Table(self.flux_aperture)
-        ascii.write(flux_table, save_dir + "lightcurve_aperture.csv", overwrite=overwrite)
+        flux_table = Table(self.flux_aperture)
+        ascii.write(flux_table, save_dir + "lightcurve_aperture.csv", 
+                    overwrite=overwrite)
         
     def aligncube(self, x0, y0, search_box=5):
         positions = []
@@ -163,7 +175,7 @@ class ObservationNight(list):
         return np.median(shift_list, axis=0), np.std(shift_list, axis=0)
 
     def shiftcube(self,x0=28, y0=13, search_box=10):
-        shift_list              = self.aligncube(x0, y0, search_box=search_box)
+        shift_list = self.aligncube(x0, y0, search_box=search_box)
         shifted_cube = []
         for image, s in zip(self.nightcube, shift_list):
             shifted_cube.append(shift(image, (s[1], s[0])))
@@ -271,7 +283,7 @@ class ObservationAnalysis(ObservationNight):
         """
         flux_aperture = []
         flux_starfinder = []
-        times           = []
+        times = []
         mask = np.zeros((100,100))
         mask_bkg = np.zeros((100,100))
         
@@ -323,9 +335,11 @@ class ObservationAnalysis(ObservationNight):
                         plt.show()
 
         self.flux_starfinder[which + "_flux"] = np.array(flux_starfinder)
-        self.flux_starfinder["time"]      = np.array(times)
+        self.flux_starfinder["time"] = np.array(times)
         self.flux_aperture[which +"_flux"] = np.array(flux_aperture)
-        self.flux_aperture["time"]      = np.array(times)
+        self.flux_aperture["time"] = np.array(times)
+        
+        
     def get_lightcurve_Sgr(self, which='S30'):
         """
         gets flux values for SgrA*
@@ -333,9 +347,6 @@ class ObservationAnalysis(ObservationNight):
         flux_Sgr = []
         mask_bkg = np.zeros((100,100))
         
-
-        
-
         def mask_function(x,y):
             mask = np.zeros((100,100))
             mask[x-2:x+3,y] = 1
@@ -395,100 +406,60 @@ class ObservationAnalysis(ObservationNight):
             plt.xlabel('Time')
             plt.show()
 
+
 class Image():
     def __init__(self, image, test=False, verbose=False):
         """
         Base class for astronomy images
         
         args:
-        image: a np.ndarray array. Test for up to 3D
+        image:   a np.ndarray array
         
         kwargs:
-        test: bool if True implented autotests are preformed
+        test:    bool if True implented autotests are preformed
         verbose: bool if True code becomes talkative
         """
-        self.image              = image
-        if type(test) != bool or type(verbose) != bool: raise ValueError("Type of test and verbose needs to be boolean but is : ", type(test), type(verbose))
-                                                                         
+        self.image = image
+        if type(test) != bool or type(verbose) != bool: 
+            raise ValueError("Type of test and verbose needs to be boolean but is : ", 
+                             type(test), type(verbose))
         self.test, self.verbose = test, verbose
+
         
 class AquisitionImage(Image):
     def __init__(self, image, header, test=False, verbose=False, correct_dead_pixels=True):   
         """
         Base class for Aquistion Camera Images
         args:
-        image: a np.ndarray array. Test for up to 3D
-        header: a fits header image_object
+        image:   a np.ndarray array. Test for up to 3D
+        header:  a fits header image_object
 
         kwargs:
-        correct_dead_pixels: bool, if True dead pixels stored in the deadpixel mask are interpolated default: True
-        test: bool if True implented autotests are preformed
-        verbose: bool if True code becomes talkative
+        correct_dead_pixels: bool, if True dead pixels stored in 
+                             the deadpixel mask are interpolated [True]
+        test:                bool if True implented autotests are preformed [False]
+        verbose:             bool if True code becomes talkative [False]
         
-        functions:
-        self.get_image():
-        function that cuts out the AC image
-        sets attributes:
-            self.image
-        
-        self.get_fiber():
-        reads fiber information from header
-        sets attributes:
-            self.ft_fiber fringetracker fiber
-            self.sc_fiber science fiber
-            self.ref_aqu  infromation on where the AC image starts on the aquistion detector
-        
-        self.get_sc_pos():
-        gets the postion of the science fiber in all four telescopes
-        sets attributes:
-            self.pos_sc     integer postion of the science fiber
-            self.pos_sc_float float postion of the science fiber
-            
-        self.get_ft_pos():
-        gets the postion of the ft fiber in all four telescopes
-        sets attributes:
-            self.pos_sc     integer postion of the ft fiber
-            self.pos_sc_float float postion of the ft fiber
-            
-        self.get_time():
-        gets the time of each exposure based on dit and ndit
-        sets attributes:
-            self.timestamps datetime timestamps based on cumsum(ndit_j*dit_j)
-            self.timestamps_str same as strings
-        
-        self.load_bad_pixelmask():
-        gets the bad pixel mask stored in the module
-        
-        self.load_dark():
-        loads dark image
-        sets attributes:
-            self.dark
-        
-        sets attributes:
-            self.mask the mask (np.ndarray)
-        
-        self.get_interpolation():
-        interpolates the dead pixels and subtracts dark
-        sets:
-            self.image_uncorrected the raw image
-            
-        updates:
-            self.image now with the dead pixel correction
+        Available functions:
+            get_image(): cuts out the AC image
+            get_fiber(): reads fiber information from header
+            get_sc_pos(): gets the postion of the science fiber
+            get_ft_pos(): gets the postion of the science fiber
+            get_time(): gets the time of each exposure based on dit and ndit
+            load_bad_pixelmask(): gets the bad pixel mask stored in the module
+            load_dark(): loads dark image
+            get_interpolation():  interpolates the dead pixels and subtracts dark
         """
         super().__init__(image, test=test, verbose=verbose)
-        self.raw_image          = self.image.copy()
-        self.header             = header
+        self.raw_image = self.image.copy()
+        self.header = header
         
-        self.date               = np.datetime64(datetime.strptime(self.header["DATE-OBS"], "%Y-%m-%dT%H:%M:%S"))
-        self.mjd                = self.header["MJD-OBS"]
-        self.exptime            = self.header["ESO DET2 SEQ1 DIT"]*self.header["ESO DET2 NDIT"]
-        self.name               = self.header["ARCFILE"]
-        self.ndit               = self.header["ESO DET1 NDIT"]
-        self.dit                = self.header["ESO DET1 SEQ1 DIT"]
-        
-
-        
-    
+        self.date = np.datetime64(datetime.strptime(self.header["DATE-OBS"], "%Y-%m-%dT%H:%M:%S"))
+        self.mjd = self.header["MJD-OBS"]
+        self.exptime = self.header["ESO DET2 SEQ1 DIT"]*self.header["ESO DET2 NDIT"]
+        self.name = self.header["ARCFILE"]
+        self.ndit = self.header["ESO DET1 NDIT"]
+        self.dit = self.header["ESO DET1 SEQ1 DIT"]
         
         self.get_image() 
         self.get_fiber()
@@ -498,143 +469,207 @@ class AquisitionImage(Image):
         self.load_bad_pixelmask()
         self.load_dark()
         self.image_uncorrected = None
+        
         if correct_dead_pixels:
-            if self.verbose: print("Deadpixel correction, this takes some time... and comsumes fuck all memory")
+            if self.verbose: 
+                print("Deadpixel correction, this takes some time... and comsumes fuck all memory")
             self.get_interpolation()
         
+        
     def get_fiber(self):
-        self.ft_fiber           = np.array([[self.header["HIERARCH ESO ACQ FIBER FT1X"], self.header["HIERARCH ESO ACQ FIBER FT1Y"]],
-                                            [self.header["HIERARCH ESO ACQ FIBER FT2X"], self.header["HIERARCH ESO ACQ FIBER FT2Y"]],
-                                            [self.header["HIERARCH ESO ACQ FIBER FT3X"], self.header["HIERARCH ESO ACQ FIBER FT3Y"]],
-                                            [self.header["HIERARCH ESO ACQ FIBER FT4X"], self.header["HIERARCH ESO ACQ FIBER FT4Y"]]])
+        """
+        reads fiber information from header
+        sets attributes:
+            self.ft_fiber fringetracker fiber
+            self.sc_fiber science fiber
+            self.ref_aqu  infromation on where the AC image starts on the aquistion detector
+        """
+        self.ft_fiber = np.array([[self.header["HIERARCH ESO ACQ FIBER FT1X"], 
+                                   self.header["HIERARCH ESO ACQ FIBER FT1Y"]],
+                                  [self.header["HIERARCH ESO ACQ FIBER FT2X"], 
+                                   self.header["HIERARCH ESO ACQ FIBER FT2Y"]],
+                                  [self.header["HIERARCH ESO ACQ FIBER FT3X"], 
+                                   self.header["HIERARCH ESO ACQ FIBER FT3Y"]],
+                                  [self.header["HIERARCH ESO ACQ FIBER FT4X"], 
+                                   self.header["HIERARCH ESO ACQ FIBER FT4Y"]]])
         
-        self.sc_fiber           = np.array([[self.header["HIERARCH ESO ACQ FIBER SC1X"], self.header["HIERARCH ESO ACQ FIBER SC1Y"]],
-                                            [self.header["HIERARCH ESO ACQ FIBER SC2X"], self.header["HIERARCH ESO ACQ FIBER SC2Y"]],
-                                            [self.header["HIERARCH ESO ACQ FIBER SC3X"], self.header["HIERARCH ESO ACQ FIBER SC3Y"]],
-                                            [self.header["HIERARCH ESO ACQ FIBER SC4X"], self.header["HIERARCH ESO ACQ FIBER SC4Y"]]])
+        self.sc_fiber = np.array([[self.header["HIERARCH ESO ACQ FIBER SC1X"], 
+                                   self.header["HIERARCH ESO ACQ FIBER SC1Y"]],
+                                  [self.header["HIERARCH ESO ACQ FIBER SC2X"], 
+                                   self.header["HIERARCH ESO ACQ FIBER SC2Y"]],
+                                  [self.header["HIERARCH ESO ACQ FIBER SC3X"], 
+                                   self.header["HIERARCH ESO ACQ FIBER SC3Y"]],
+                                  [self.header["HIERARCH ESO ACQ FIBER SC4X"], 
+                                   self.header["HIERARCH ESO ACQ FIBER SC4Y"]]])
         
-        self.ref_aqu            = np.array([[self.header["ESO DET1 FRAM1 STRX"], self.header["ESO DET1 FRAM1 STRY"]],
-                                            [self.header["ESO DET1 FRAM2 STRX"], self.header["ESO DET1 FRAM2 STRY"]],
-                                            [self.header["ESO DET1 FRAM3 STRX"], self.header["ESO DET1 FRAM3 STRY"]],
-                                            [self.header["ESO DET1 FRAM4 STRX"], self.header["ESO DET1 FRAM4 STRY"]]])
+        self.ref_aqu = np.array([[self.header["ESO DET1 FRAM1 STRX"], 
+                                  self.header["ESO DET1 FRAM1 STRY"]],
+                                 [self.header["ESO DET1 FRAM2 STRX"], 
+                                  self.header["ESO DET1 FRAM2 STRY"]],
+                                 [self.header["ESO DET1 FRAM3 STRX"], 
+                                  self.header["ESO DET1 FRAM3 STRY"]],
+                                 [self.header["ESO DET1 FRAM4 STRX"], 
+                                  self.header["ESO DET1 FRAM4 STRY"]]])
+        
         
     def get_sc_pos(self):
-        self.pos_sc_float       = np.array([[self.sc_fiber[0][1] - self.ref_aqu[0][1], self.sc_fiber[0][0] - self.ref_aqu[0][0]],
-                                            [self.sc_fiber[1][1] - self.ref_aqu[1][1], self.sc_fiber[1][0] - self.ref_aqu[1][0] + 250],
-                                            [self.sc_fiber[2][1] - self.ref_aqu[2][1], self.sc_fiber[2][0] - self.ref_aqu[2][0] + 500],
-                                            [self.sc_fiber[2][1] - self.ref_aqu[2][1], self.sc_fiber[2][0] - self.ref_aqu[2][0] + 750]])
-        self.pos_sc             = np.round(self.pos_sc_float).astype(int)
-        
-        self.pos_sc_float       = np.array([[self.sc_fiber[0][1] - self.ref_aqu[0][1], self.sc_fiber[0][0] - self.ref_aqu[0][0]],
-                                            [self.sc_fiber[1][1] - self.ref_aqu[1][1], self.sc_fiber[1][0] - self.ref_aqu[1][0] + 250],
-                                            [self.sc_fiber[2][1] - self.ref_aqu[2][1], self.sc_fiber[2][0] - self.ref_aqu[2][0] + 500],
-                                            [self.sc_fiber[2][1] - self.ref_aqu[2][1], self.sc_fiber[2][0] - self.ref_aqu[2][0] + 750]])
+        """
+        gets the postion of the science fiber in all four telescopes
+        sets attributes:
+            self.pos_sc     integer postion of the science fiber
+            self.pos_sc_float float postion of the science fiber
+        """
+        self.pos_sc_float = np.array([[self.sc_fiber[0][1] - self.ref_aqu[0][1], 
+                                       self.sc_fiber[0][0] - self.ref_aqu[0][0]],
+                                      [self.sc_fiber[1][1] - self.ref_aqu[1][1], 
+                                       self.sc_fiber[1][0] - self.ref_aqu[1][0] + 250],
+                                      [self.sc_fiber[2][1] - self.ref_aqu[2][1], 
+                                       self.sc_fiber[2][0] - self.ref_aqu[2][0] + 500],
+                                      [self.sc_fiber[2][1] - self.ref_aqu[2][1],
+                                       self.sc_fiber[2][0] - self.ref_aqu[2][0] + 750]])
+        self.pos_sc = np.round(np.copy(self.pos_sc_float)).astype(int)
+    
     
     def get_ft_pos(self):
-        self.pos_ft_float       = np.array([[self.ft_fiber[0][1] - self.ref_aqu[0][1], self.ft_fiber[0][0] - self.ref_aqu[0][0]],
-                                            [self.ft_fiber[1][1] - self.ref_aqu[1][1], self.ft_fiber[1][0] - self.ref_aqu[1][0] + 250],
-                                            [self.ft_fiber[2][1] - self.ref_aqu[2][1], self.ft_fiber[2][0] - self.ref_aqu[2][0] + 500],
-                                            [self.ft_fiber[2][1] - self.ref_aqu[2][1], self.ft_fiber[2][0] - self.ref_aqu[2][0] + 750]])
-        self.pos_ft             = np.round(self.pos_ft_float).astype(int)
+        """
+        gets the postion of the ft fiber in all four telescopes
+        sets attributes:
+            self.pos_sc     integer postion of the ft fiber
+            self.pos_sc_float float postion of the ft fiber
+        """
+        self.pos_ft_float = np.array([[self.ft_fiber[0][1] - self.ref_aqu[0][1], 
+                                       self.ft_fiber[0][0] - self.ref_aqu[0][0]],
+                                      [self.ft_fiber[1][1] - self.ref_aqu[1][1], 
+                                       self.ft_fiber[1][0] - self.ref_aqu[1][0] + 250],
+                                      [self.ft_fiber[2][1] - self.ref_aqu[2][1], 
+                                       self.ft_fiber[2][0] - self.ref_aqu[2][0] + 500],
+                                      [self.ft_fiber[2][1] - self.ref_aqu[2][1], 
+                                       self.ft_fiber[2][0] - self.ref_aqu[2][0] + 750]])
+        self.pos_ft = np.round(np.copy(self.pos_ft_float)).astype(int)
+        
         
     def get_image(self):
-        self.image              = self.raw_image[:, 0:249, :] 
+        """
+        function that cuts out the AC image
+        sets attributes:
+            self.image
+        """
+        self.image = self.raw_image[:, 0:249, :] 
         
-    def get_bad_pixelmask(self, ):
+        
+    def get_bad_pixelmask(self):
+        """
+        FW: ATTENTION not sure what this is supposed to do
+        """
         def rms(image):
-            im                  = np.array(image, dtype=float)
-            im2                 = im**2
-            ones                = np.ones(im.shape)
-            kernel              = np.ones((3,3))
-            kernel[0,2]         = 0
-            kernel[0,2]         = 0
-            kernel[2,0]         = 0
-            kernel[2,2]         = 0
-            kernel[1,2]         = 0.5
-            kernel[0,1]         = 0.5
-            kernel[2,1]         = 0.5
-            kernel[1,2]         = 0.5
-            s                   = np.array([convolve2d(i, kernel, mode="same") for i in im])
-            s2                  = np.array([convolve2d(i2, kernel, mode="same") for i2 in im2])
-            ns                  = np.array([convolve2d(o, kernel, mode="same") for o in ones])
+            im = np.array(image, dtype=float)
+            im2 = im**2
+            ones = np.ones(im.shape)
+            kernel = np.ones((3,3))
+            kernel[0,2] = 0
+            kernel[0,2] = 0
+            kernel[2,0] = 0
+            kernel[2,2] = 0
+            kernel[1,2] = 0.5
+            kernel[0,1] = 0.5
+            kernel[2,1] = 0.5
+            kernel[1,2] = 0.5
+            s = np.array([convolve2d(i, kernel, mode="same") for i in im])
+            s2 = np.array([convolve2d(i2, kernel, mode="same") for i2 in im2])
+            ns = np.array([convolve2d(o, kernel, mode="same") for o in ones])
             return np.sqrt((s2 - s**2 / ns) / ns)
-        
-        
         raise Exception("buggy implented")
-        m0                      = rms(self.image)
+        m0 = rms(self.image)
         if self.test:
-            fig, axes           = plt.subplots(1,2)
+            fig, axes = plt.subplots(1,2)
             axes[0].imshow(np.nanmedian(m0, axis=0), origin="lower", norm=LogNorm())
             axes[1].imshow(np.nanmedian(self.image, axis=0), origin="lower", norm=LogNorm())
             plt.show()
             
-        self.mask               = np.ones_like(self.image, dtype=bool)
-        #self.mask[m0 > 1e3]    = False
+        self.mask = np.ones_like(self.image, dtype=bool)
+        #self.mask[m0 > 1e3] = False
         self.mask[self.image <= 0.] = False
         self.mask[self.image >= 1e4] = False
         #plt.figure()
         #plt.imshow(np.median(self.mask,axis=0), origin="lower")
         #plt.show()
        
+       
     def load_bad_pixelmask(self):
-        data                    = fits.getdata("gvacq_DeadPixelMap.fits")
-        mask                    = np.zeros_like(self.image[0])
+        """
+        gets the bad pixel mask stored in the module
+        """
+        deadfile = resource_filename('AquisitionCamera', 'static_files/gvacq_DeadPixelMap.fits')
+        data = fits.open(deadfile)[0].data
+        mask = np.zeros_like(self.image[0])
         
-        mask[0:249, 0:249]      = data[self.ref_aqu[0,1]:self.ref_aqu[0,1]+249,self.ref_aqu[0,0]:self.ref_aqu[0,0]+249]
-        mask[0:250, 250:499]    = data[self.ref_aqu[1,1]:self.ref_aqu[1,1]+249,self.ref_aqu[1,0]:self.ref_aqu[1,0]+249] ##BUG unclear why one goes 250 ##Not sure, but maybe because [:250] means from 1-249
-        mask[0:249, 500:749]    = data[self.ref_aqu[2,1]:self.ref_aqu[2,1]+249,self.ref_aqu[2,0]:self.ref_aqu[2,0]+249]
-        mask[0:249, 750:-1]     = data[self.ref_aqu[3,1]:self.ref_aqu[3,1]+249,self.ref_aqu[3,0]:self.ref_aqu[3,0]+249]
+        mask[0:249, 0:249] = data[self.ref_aqu[0,1]:self.ref_aqu[0,1]+249,
+                                  self.ref_aqu[0,0]:self.ref_aqu[0,0]+249]
+        mask[0:250, 250:499] = data[self.ref_aqu[1,1]:self.ref_aqu[1,1]+249,
+                                    self.ref_aqu[1,0]:self.ref_aqu[1,0]+249] 
+        ##BUG unclear why one goes 250 ##Not sure, but maybe because [:250] means from 1-249
+        mask[0:249, 500:749] = data[self.ref_aqu[2,1]:self.ref_aqu[2,1]+249,
+                                    self.ref_aqu[2,0]:self.ref_aqu[2,0]+249]
+        mask[0:249, 750:-1] = data[self.ref_aqu[3,1]:self.ref_aqu[3,1]+249,
+                                   self.ref_aqu[3,0]:self.ref_aqu[3,0]+249]
         
-        self.mask               = np.tile(mask, (self.image.shape[0], 1, 1))
+        self.mask = np.tile(mask, (self.image.shape[0], 1, 1))
         
     
     def load_dark(self):
         """
         loads dark image
+        sets attributes:
+            self.dark
         """
-        dark                    = fits.getdata("ACQ_dark07_20171229_DIT.fits")
-        dark                    = np.nanmean(dark,0)
+        darkfile = resource_filename('AquisitionCamera', 'static_files/ACQ_dark07_20171229_DIT_mean.fits')
+        dark = fits.open(darkfile)[0].data
+        
+        data = np.zeros_like(self.image[0])
+        data[0:249, 0:249] = dark[self.ref_aqu[0,1]:self.ref_aqu[0,1]+249,self.
+                                  ref_aqu[0,0]:self.ref_aqu[0,0]+249]
+        data[0:250, 250:499] = dark[self.ref_aqu[1,1]:self.ref_aqu[1,1]+249,
+                                    self.ref_aqu[1,0]:self.ref_aqu[1,0]+249] 
+        ##BUG unclear why one goes 250 ##Not sure, but maybe because [:250] means from 1-249
+        data[0:249, 500:749] = dark[self.ref_aqu[2,1]:self.ref_aqu[2,1]+249,
+                                    self.ref_aqu[2,0]:self.ref_aqu[2,0]+249]
+        data[0:249, 750:-1] = dark[self.ref_aqu[3,1]:self.ref_aqu[3,1]+249,
+                                   self.ref_aqu[3,0]:self.ref_aqu[3,0]+249]
+        self.dark = np.tile(data, (self.image.shape[0], 1, 1))
         
         if self.test:
             plt.title("mean of dark")
             plt.imshow(dark, origin="lower", norm=LogNorm())
             plt.show()
-            
-        data = np.zeros_like(self.image[0])
-        data[0:249, 0:249]      = dark[self.ref_aqu[0,1]:self.ref_aqu[0,1]+249,self.ref_aqu[0,0]:self.ref_aqu[0,0]+249]
-        data[0:250, 250:499]    = dark[self.ref_aqu[1,1]:self.ref_aqu[1,1]+249,self.ref_aqu[1,0]:self.ref_aqu[1,0]+249] ##BUG unclear why one goes 250 ##Not sure, but maybe because [:250] means from 1-249
-        data[0:249, 500:749]    = dark[self.ref_aqu[2,1]:self.ref_aqu[2,1]+249,self.ref_aqu[2,0]:self.ref_aqu[2,0]+249]
-        data[0:249, 750:-1]     = dark[self.ref_aqu[3,1]:self.ref_aqu[3,1]+249,self.ref_aqu[3,0]:self.ref_aqu[3,0]+249]
-        data                    = np.tile(data, (self.image.shape[0], 1, 1))
-        self.dark               = data.copy()
-        
-        if self.verbose:
-            print("dark shape:", self.dark.shape)
 
-        if self.test:
             plt.title("the cut dark")
-            plt.imshow(np.nanmean(data,axis=0), origin="lower", norm=LogNorm())
+            plt.imshow(np.nanmean(self.dark,axis=0), origin="lower", norm=LogNorm())
             plt.figure()
             plt.title("Dark minus image")
-            plt.imshow(np.nanmean(self.image, axis=0) - np.mean(data, axis=0), origin="lower", norm=LogNorm())
-
+            plt.imshow(np.nanmean(self.image, axis=0) - np.mean(self.dark, axis=0), 
+                       origin="lower", norm=LogNorm())
             plt.show()
         
+        
     def get_interpolation(self):
-        from astropy.convolution import Gaussian2DKernel, interpolate_replace_nans
-        if self.mask is None: self.get_bad_pixelmask()
+        """
+        interpolates the dead pixels and subtracts dark
+        sets:
+            self.image_uncorrected the raw image
+        """
+        if self.mask is None: 
+            self.get_bad_pixelmask()
+        mask = self.mask.copy()
+        image = self.image.copy() ## image uncorrected
+        image_dark = image - self.dark ## image uncorrected, dark subtracted
         
-        mask                    = self.mask.copy()
-        image                   = self.image.copy() ## image uncorrected
-        image_dark              = image - self.dark ## image uncorrected, dark subtracted
+        image_dark[mask == True] = np.nan
         
-        image_dark[mask == True]     = np.nan
+        kernel = Gaussian2DKernel(y_stddev=1, x_stddev=1)
+        fixed_image = np.array([interpolate_replace_nans(i, kernel) for i in image_dark])
         
-        kernel                  = Gaussian2DKernel(y_stddev=1, x_stddev=1)
-        fixed_image             = np.array([interpolate_replace_nans(i, kernel) for i in image_dark])
-        
-        self.image_uncorrected  = self.image.copy()
-        self.image              = fixed_image.copy()
+        self.image_uncorrected = self.image.copy()
+        self.image = fixed_image.copy()
         
         if self.test:
             fig, axes = plt.subplots(1,3)
@@ -650,20 +685,35 @@ class AquisitionImage(Image):
             plt.show()
             
             print("The dead pixels are interpolated assuming the deadpixel mask stored in the module")
-            fig, axes               = plt.subplots(1,2, figsize=(16,10))
+            fig, axes = plt.subplots(1,2, figsize=(16,10))
             axes[0].imshow(np.nanmedian(self.image, axis=0), origin="lower", norm=LogNorm())
             axes[1].imshow(np.nanmedian(fixed_image, axis=0), origin="lower", norm=LogNorm())
-            #plt.show()
+            plt.show()
             
         del(image, mask, kernel, fixed_image)
-        gc.collect()
     
+    def get_time(self):
+        """
+        gets the time of each exposure based on dit and ndit
+        sets attributes:
+            self.timestamps datetime timestamps based on cumsum(ndit_j*dit_j)
+            self.timestamps_str same as strings
+        """
+        time = np.cumsum(np.repeat(self.exptime/self.ndit, self.ndit))
+        if self.test:
+            print(time)
+            print(self.exptime)
+        
+        time_ms = np.array([np.timedelta64(int(ti*1000), "ms") for ti in time])
+        self.timestamps = np.array([self.date + ti for ti in time_ms])
+        self.timestamps_str = np.array([str(pd.to_datetime(ti)) for ti in self.timestamps])
+
     def get_aquisition_camera_plot(self, average=True, show=True):
-        fig, ax                 = plt.subplots()
+        fig, ax = plt.subplots()
         if average:
-            image               = np.nanmedian(self.image[:10,:,:], axis=0)
+            image = np.nanmedian(self.image[:10,:,:], axis=0)
         else:
-            image               = self.image[0]
+            image = self.image[0]
         
         image[self.pos_sc[0][0], self.pos_sc[0][1]] = 15000000
         image[self.pos_sc[1][0], self.pos_sc[1][1]] = 15000000
@@ -680,123 +730,122 @@ class AquisitionImage(Image):
         if show:
             plt.show()
 
-    def get_time(self):
-        time                    = np.cumsum(np.repeat(self.exptime/self.ndit, self.ndit))
-        if self.test:
-            print(time)
-            print(self.exptime)
-        
-        time_ms                 = np.array([np.timedelta64(int(ti*1000), "ms") for ti in time])
-        self.timestamps         = np.array([self.date + ti for ti in time_ms])
-        self.timestamps_str     = np.array([str(pd.to_datetime(ti)) for ti in self.timestamps])
+
 
 class ScienceImage(AquisitionImage):
-    def __init__(self, image, header, test=False, verbose=False, stack=20, correct_dead_pixels=True, sigma=3., box_size=(10,10), filter_size=(3,3)):
+    def __init__(self, image, header, test=False, verbose=False, stack=20, correct_dead_pixels=True,
+                 sc_crop=50, ft_crop=50, sigma=3., box_size=(10,10), filter_size=(3,3)):
         """
         A bit higher level class assuming that the AquistionImage is used for Science
         args:
-        image: a np.ndarray array. Test for up to 3D
+        image:  a np.ndarray array. Test for up to 3D
         header: a fits header image_object
 
         kwargs:
-        stack: number of single exposures that are stacked, default=20
-        correct_dead_pixels: bool, if True dead pixels stored in the deadpixel mask are interpolated
-        test: bool if True implented autotests are preformed
-        verbose: bool if True code becomes talkative
+        stack:               number of single exposures that are stacked [20]
+        correct_dead_pixels: bool, if True dead pixels stored in the deadpixel mask are interpolated [True]
+        test:                bool if True implented autotests are preformed [False]
+        verbose:             bool if True code becomes talkative [False]
+        sc_crop:             size of field to be cutted out around SC star [50]
+        ft_crop:             size of field to be cutted out around FT star [50]
+        sigma:               sigma for background subtraction [3]
+        box_size:            box size for for background subtraction [(10,10)]
+        filter_size:         filter size for background subtraction [(3,3)]
         
-        functions:
-        
-        self.get_science_fields()
-        kwargs:
-        crop_out: tuple, region to be cut out [px] default=(50,50) science fiber position +- 50 px
-        
-        sets attributes:
-        self.raw_image      the copy of the raw image as created in AquisitionImage
-        self.image          the nanmedian of all telescopes
-        self.sub_images     all four telescope images
-        
-        self.get_sky_subtraction()
-        kwargs: sigma, box_size: Box size for background estimation, filter_size: Box size to filter median background in boxes
-        subtracts sky/background from self.image
-        sets attributes:
-            self.cube (3dim), self.cube_with_background (3dim), self.image_with_background (2dim), self.image (2dim, without sky)
-        
-        self.get_frames():
-        gets the frames according to the number of stacks
-        sets attributes:
-            self.timeframes time of frames in 2019.XX-style
-            
-        sets attributes:
-            self.frames     the frames stacked according to self.stack
-            self.frame_times the respective times 
-            
-        self.get_frame_plot():
-        simple plot helper
-        
-        self.save_fits():
-        saves the science images to a HDUList fits file_names, naming convention is input file name + _aquisition_camera_cube.fits
-        args: 
-        store_dir the storage store_dir
-        cube                    = fits.PrimaryHDU(self.frames, header=self.header) PrimaryHDU holds the frames
-        raw                     = fits.ImageHDU(self.image) indivudal exposures
-        image                   = fits.ImageHDU(np.nanmedian(self.image, axis=0)) collapse image of the file
-        psf                     = fits.ImageHDU(self.psf) the psf extracted, WARNING PSF is shit, this should not be used.
+        Functions:
+        get_sc_fields(): cuts out small field around sc star
+        get_ft_fields(): cuts out small field around ft star
+        get_sky_subtraction(): subtracts sky/background from self.image
+        self.get_frames(): ges the frames according to the number of stacks
+        self.get_frame_plot(): simple plot helper
+        self.save_fits(): saves the science images to a HDUList fits
         """
-        
-        super().__init__(image, header, test=test, verbose=verbose, correct_dead_pixels=correct_dead_pixels)
-        # set attributes
-        self.stack              = int(stack)
-        # sky subtraction controlls
-        self.sigma, self.box_size, self.filter_size = sigma, box_size, filter_size
+        super().__init__(image, header, test=test, verbose=verbose, 
+                         correct_dead_pixels=correct_dead_pixels)
+        self.stack = int(stack)
+        self.sigma = sigma
+        self.box_size = box_size
+        self.filter_size = filter_size
         self.timeframes = []
         
-        self.get_science_fields()
-        self.get_sky_subtraction()
+        self.get_sc_fields(crop_out=sc_crop)
+        self.get_ft_fields(crop_out=ft_crop)
+        (self.sc_image, self.sc_image_w_bg, 
+         self.sc_cube, self.sc_cube_w_bg) = self.get_sky_subtraction(self.sc_image)
+        (self.ft_image, self.ft_image_w_bg, 
+         self.ft_cube, self.ft_cube_w_bg) = self.get_sky_subtraction(self.ft_image)
         self.get_frames()
         
-    def get_science_fields(self, crop_out=(50, 50)):
-        image                   = []
+        
+    def get_sc_fields(self, crop_out=50):
+        """
+        cuts out small field around sc star
+        size of field  is crop_out x crop_out
+        sets atributes:
+            self.sc_image
+            self.sc_sub_image
+        """
+        image = []
         for pos in self.pos_sc:
-            image.append(self.image[:, pos[0]-50:pos[0]+50, pos[1]-50:pos[1]+50])            
+            image.append(self.image[:, pos[0]-crop_out:pos[0]+crop_out, 
+                                       pos[1]-crop_out:pos[1]+crop_out])            
         if self.test:
-            for i in image:
-                
+            for idx, i in enumerate(image):
                 plt.figure()
                 plt.imshow(np.nanmedian(i[:, :, ::-1] , axis=0), origin="lower", norm=LogNorm() )
-                plt.plot(49,49, "o")
-            plt.figure()
-            plt.imshow(np.nanmedian(image, axis=(0,1))[:,::-1], origin="lower", norm=LogNorm())
+                plt.plot(crop_out-1,crop_out-1, "o")
             plt.show()
-            
-        self.raw_image          = self.image.copy()
-        self.image              = np.nanmedian(np.array(image), axis=(0)) ###BUG this definition is different form GalacticCenterImage, where self.image is just self.raw_image --- ###WARNING not sure if thats actually true!
-        self.sub_images         = np.array(image)
-    
-    def get_sky_subtraction(self, sigma=None, box_size=None, filter_size=None):
+        self.sc_image = np.nanmedian(np.array(image), axis=(0)) 
+        self.sc_sub_images = np.array(image)
+
+    def get_ft_fields(self, crop_out=50):
         """
-        subtracts background from image
+        cuts out small field around ft star
+        size of field  is crop_out x crop_out
+        sets atributes:
+            self.ft_image
+            self.ft_sub_image
+        """
+        image = []
+        for pos in self.pos_ft:
+            image.append(self.image[:, pos[0]-crop_out:pos[0]+crop_out, 
+                                       pos[1]-crop_out:pos[1]+crop_out])            
+        if self.test:
+            for idx, i in enumerate(image):
+                plt.figure()
+                plt.imshow(np.nanmedian(i[:, :, ::-1] , axis=0), origin="lower", norm=LogNorm() )
+                plt.plot(crop_out-1,crop_out-1, "o")
+            plt.show()
+        self.ft_image = np.nanmedian(np.array(image), axis=(0)) 
+        self.ft_sub_images = np.array(image)
+        
+    
+    def get_sky_subtraction(self, image, sigma=None, box_size=None, filter_size=None):
+        """
+        subtracts background from image, return the background subtracted image
         """
         if sigma is None:
-            sigma               = self.sigma
+            sigma = self.sigma
         if box_size is None:
-            box_size            = self.box_size
+            box_size = self.box_size
         if filter_size is None:
-            filter_size         = self.filter_size
+            filter_size = self.filter_size
             
-        self.cube               = self.image.copy()
-        image                   = self.image.copy()
-        image                   = np.nanmedian(image, axis=0)
+        # SC star
+        cube = image.copy()
+        image = np.nanmedian(image, axis=0)
     
-        sigma_clip              = SigmaClip(sigma=sigma)
-        bkg_estimator           = MedianBackground()
-        bkg                     = Background2D(image, box_size, filter_size=filter_size, sigma_clip = sigma_clip, bkg_estimator = bkg_estimator)
+        sigma_clip = SigmaClip(sigma=sigma)
+        bkg_estimator = MedianBackground()
+        bkg = Background2D(image, box_size, filter_size=filter_size, sigma_clip = sigma_clip, bkg_estimator = bkg_estimator)
         
-        self.image_with_background = image
-        b                       = image - bkg.background
-        self.image              = b-b.min()
-        self.cube_with_background = self.cube.copy()
-        self.cube               = [(c - bkg.background) for c in self.cube]
-        self.cube               = np.array([c - c.min() for c in self.cube])
+        image_with_background = image
+        b = image - bkg.background
+        image = b-b.min()
+        
+        cube_with_background = cube.copy()
+        cube = [(c - bkg.background) for c in cube]
+        cube = np.array([c - c.min() for c in cube])
 
         if self.verbose:    
             print('Median background: ', bkg.background_median)
@@ -805,81 +854,101 @@ class ScienceImage(AquisitionImage):
         if self.test:
             fig, axes = plt.subplots(1,3)
             b = image - bkg.background
-            axes[0].imshow(self.image, origin='lower', norm=LogNorm(vmax=300))
+            axes[0].imshow(image, origin='lower', norm=LogNorm(vmax=300))
             axes[0].title.set_text("image - background")  
-            
             axes[1].imshow(image, origin='lower', norm=LogNorm(vmax=300))
             axes[1].title.set_text("image")            
-            
             axes[2].imshow(bkg.background, origin='lower', norm=LogNorm(vmax=300))
             axes[2].title.set_text("background")
-            
             plt.show()
+        
+        return image, image_with_background, cube, cube_with_background
+    
     
     def get_frames(self):
+        """
+        
+        """
         t0 = np.datetime64(self.header["HIERARCH ESO PCR ACQ START"])
         t1 = np.datetime64(self.header["HIERARCH ESO PCR ACQ END"])
         delta_t = (t1-t0)/self.ndit*self.stack//2
-        c                       = 0
+        c = 0
         frames, frame_times, f0 = [], [], []
-        c00                     = 0
-        for index, im in enumerate(self.cube):
-            c                   +=1
+        c00 = 0
+        for index, im in enumerate(self.sc_cube):
+            c +=1
             if c <= self.stack:
                 f0.append(im)
             else:
                 frames.append(np.median(f0, axis=0))
                 frame_times.append(t0 + delta_t*2*c00+ delta_t)
-                c               = 0
-                f0              = []
-                c00             +=1
-  
-        self.frames             = np.array(frames)
-        self.frame_times        = np.array(frame_times)
+                c = 0
+                f0 = []
+                c00 +=1
+        self.sc_frames = np.array(frames)
+        self.frame_times = np.array(frame_times)
+
+        for index, im in enumerate(self.ft_cube):
+            c +=1
+            if c <= self.stack:
+                f0.append(im)
+            else:
+                frames.append(np.median(f0, axis=0))
+                c = 0
+                f0 = []
+        self.ft_frames = np.array(frames)
     
         for f_t in self.frame_times:
             t = AstropyTime(str(f_t)).decimalyear
             self.timeframes.append(t)
         
-        del(frames, frame_times)
-        gc.collect()
-        
         if self.test:
             plt.plot(self.timestamps,'.')
             plt.plot(frame_times, "o")
             plt.show()
+
+        del(frames, frame_times)
+        gc.collect()
             
     def get_frame_plot(self):
         for fi, t in zip(self.frames, self.frame_times):
             plt.figure()                 
             plt.imshow(fi[:,::-1], origin="lower", norm=LogNorm(), )
-
         plt.show()
+
             
     def save_fits(self, store_dir, overwrite=False):
-        name                    = store_dir + self.name[:-5] + "_aquisition_camera_cube.fits"
+        """
+        saves the science images to a HDUList fits file_names, 
+        naming convention is input file name + _aquisition_camera_cube.fits
         
-        cube                    = fits.PrimaryHDU(self.frames, header=self.header)
-        raw                     = fits.ImageHDU(self.raw_image)
-        image                   = fits.ImageHDU(self.image)
+        args: 
+        store_dir the storage store_dir
+        cube = fits.PrimaryHDU(self.frames, header=self.header) PrimaryHDU holds the frames
+        raw = fits.ImageHDU(self.image) indivudal exposures
+        image = fits.ImageHDU(np.nanmedian(self.image, axis=0)) collapse image of the file
+        psf = fits.ImageHDU(self.psf) the psf extracted, 
+        WARNING PSF is shit, this should not be used.
+        """
+        name = store_dir + self.name[:-5] + "_aquisition_camera_cube.fits"
+        cube = fits.PrimaryHDU(self.frames, header=self.header)
+        raw = fits.ImageHDU(self.image)
+        image = fits.ImageHDU(self.sc_image)
         try:
-
             ascii.write(self.sources, store_dir + self.name[:-5] + "_source_table.csv", overwrite=overwrite)
-            
         except AttributeError:
             print("no sources...")
-            hdul                = fits.HDUList([cube, raw, image])
-            
-        
-        hdul                    = fits.HDUList([cube, raw, image])
+            hdul = fits.HDUList([cube, raw, image])
+        hdul = fits.HDUList([cube, raw, image])
         hdul.writeto(name, overwrite=overwrite)
+
         
 class GalacticCenterImage(ScienceImage):
     def __init__(self, image, header, test=False, verbose=False, correct_dead_pixels=True):
         """
         A bit higher level class assuming that the AquistionImage is used for Science
         args:
-        image: a np.ndarray array. Test for up to 3D
+        image:  a np.ndarray array. Test for up to 3D
         header: a fits header image_object
 
         kwargs:
@@ -920,57 +989,62 @@ class GalacticCenterImage(ScienceImage):
         """
         
         super().__init__(image, header, test=test, verbose=verbose, correct_dead_pixels=correct_dead_pixels)
-        self.sources            = None
+        self.sources = None
         self.get_stars()
         self.compute_distance_star()
         self.get_star_names()
         
+        print('self.image used to be the cutout around the sc fiber.')
+        print('I did not like the approach to always redefine self.image.')
+        print('so the result of ScienceImage.get_science_fields is now')
+        print('defined in self.sc_image')
+        print('Maybe one has to rename self.image in the following to be self.sc_image')
+        print('Sorry, bro')
+        
         
     def get_PSF(self, test=None):
-        if test is None: test   = self.test
-        from astropy.table import Table
-        from astropy.nddata import NDData
-        from photutils.psf import extract_stars
-        from scipy.interpolate import interp2d        
-        data                    = self.image.copy()
+        if test is None: 
+            test = self.test
+        data = self.image.copy()
 
-        psf_stars_x             = [19, 54, 71, 60, 78, 74, 68, 81]
-        psf_stars_y             = [69, 32, 58, 54, 50, 17, 36, 61]
+        psf_stars_x = [19, 54, 71, 60, 78, 74, 68, 81]
+        psf_stars_y = [69, 32, 58, 54, 50, 17, 36, 61]
         
         if test:
             plt.imshow(data, origin="lower", norm=LogNorm(vmax=100))
             plt.plot(psf_stars_x, psf_stars_y, "o", color="white")
             plt.show()
-        stars_tbl               = Table()
-        stars_tbl['x']          = psf_stars_x
-        stars_tbl['y']          = psf_stars_y
+        stars_tbl = Table()
+        stars_tbl['x'] = psf_stars_x
+        stars_tbl['y'] = psf_stars_y
 
-        nddata                  = NDData(data=data)
-        stars                   = extract_stars(nddata, stars_tbl, size=15)
+        nddata = NDData(data=data)
+        stars = extract_stars(nddata, stars_tbl, size=15)
         staro = []
-        X, Y                    = np.arange(0,15), np.arange(0, 15)
-        X, Y                    = np.meshgrid(X,Y)
+        X, Y = np.arange(0,15), np.arange(0, 15)
+        X, Y = np.meshgrid(X,Y)
         for star in stars:
-            s                   = np.array(star)
-            s                   = (s-s.min())/(s.max() + s.min())
-            f                   = interp2d(X, Y, s, kind="cubic")
-            x,y                 = np.linspace(0, 15, 30), np.linspace(0, 15, 30)
+            s = np.array(star)
+            s = (s-s.min())/(s.max() + s.min())
+            f = interp2d(X, Y, s, kind="cubic")
+            x,y = np.linspace(0, 15, 30), np.linspace(0, 15, 30)
             staro.append(f(x, y))
 
         if test:
             plt.imshow(np.nanmedian(staro, axis=0), origin="lower", norm=LogNorm())
             plt.show()
-        self.psf                = np.nanmedian(staro, axis=0)
-        #x,y                     = np.meshgrid(x, y)
-        #f                       = interp2d(x, y, self.psf, kind="cubic")
-        #self.psf                = f(np.arange(0,15), np.arange(0, 15))
+        self.psf = np.nanmedian(staro, axis=0)
+        #x,y = np.meshgrid(x, y)
+        #f = interp2d(x, y, self.psf, kind="cubic")
+        #self.psf = f(np.arange(0,15), np.arange(0, 15))
+        
         
     def get_stars(self, test=None):
-        if test is None: test   = self.test
+        if test is None: test = self.test
         from photutils import DAOStarFinder
-        data                    = self.image.copy()
-        daofind                 = DAOStarFinder(fwhm=4.5, threshold=3.)
-        self.sources            = daofind(data)
+        data = self.image.copy()
+        daofind = DAOStarFinder(fwhm=4.5, threshold=3.)
+        self.sources = daofind(data)
     
         if test:
             plt.imshow(data, origin="lower", norm=LogNorm(vmax=100))
@@ -997,6 +1071,7 @@ class GalacticCenterImage(ScienceImage):
             self.get_S4()   
         except IndexError:
             self.S4 = None
+
             
     def compute_distance_star(self, which='S30'):        
         """
@@ -1175,7 +1250,6 @@ class GalacticCenterImage(ScienceImage):
                 self.sources[index_star]['star'] = j
             except IndexError:
                 pass
-            
         
         if self.test:
             plt.imshow(self.image, origin='lower', norm=LogNorm(vmax=100))
@@ -1319,16 +1393,11 @@ class GalacticCenterImage(ScienceImage):
         from scipy.signal import  convolve2d
         from skimage import restoration
         
-        data                    = self.image.copy()
+        data = self.image.copy()
         
         #deconvolved_RL = restoration.unsupervised_wiener(data, self.psf)
-        
         
         plt.imshow(deconvolved_RL, origin="lower")
         plt.figure()
         plt.imshow(data, origin="lower", norm=LogNorm())
         plt.show()
-    
-
-            
-#opener("/home/sebastiano/Documents/Data/GRAVITY/data/")
